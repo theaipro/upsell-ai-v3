@@ -29,18 +29,17 @@ export default function SignInPage() {
     setError("")
     setIsLoading(true)
 
-    try {
-      const success = await login(formData.email, formData.password)
-      if (success) {
-        router.push("/dashboard")
-      } else {
-        setError("Invalid email or password. Please try again.")
-      }
-    } catch (err) {
-      setError("An error occurred. Please try again.")
-    } finally {
-      setIsLoading(false)
+    const { success, error } = await login(formData.email, formData.password)
+
+    if (success) {
+      router.push("/dashboard")
+    } else if (error) {
+      setError(error)
+    } else {
+      setError("An unexpected error occurred. Please try again.")
     }
+
+    setIsLoading(false)
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {

@@ -43,18 +43,17 @@ export default function SignUpPage() {
 
     setIsLoading(true)
 
-    try {
-      const success = await signup(formData.name, formData.email, formData.password)
-      if (success) {
-        router.push("/verify")
-      } else {
-        setError("Failed to create account. Please try again.")
-      }
-    } catch (err) {
-      setError("An error occurred. Please try again.")
-    } finally {
-      setIsLoading(false)
+    const { success, error } = await signup(formData.name, formData.email, formData.password)
+
+    if (success) {
+      router.push("/verify")
+    } else if (error) {
+      setError(error)
+    } else {
+      setError("An unexpected error occurred. Please try again.")
     }
+
+    setIsLoading(false)
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
