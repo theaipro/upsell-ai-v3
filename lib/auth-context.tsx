@@ -2,12 +2,11 @@
 
 import type React from "react"
 import { createContext, useContext, useState, useEffect } from "react"
+import { supabase } from "./supabase-client"
+import type { User as SupabaseUser } from "@supabase/supabase-js"
 
-interface User {
-  email: string
-  name: string
-  isVerified: boolean
-  companyId?: string
+interface User extends SupabaseUser {
+  // Add any custom user properties here if needed in the future
 }
 
 interface Company {
@@ -25,11 +24,11 @@ interface Company {
 interface AuthContextType {
   user: User | null
   company: Company | null
-  login: (email: string, password: string) => Promise<boolean>
-  signup: (name: string, email: string, password: string) => Promise<boolean>
+  login: (email: string, password: string) => Promise<{ success: boolean; error: string | null }>
+  signup: (name: string, email: string, password: string) => Promise<{ success: boolean; error: string | null }>
   verifyEmail: (code: string) => Promise<boolean>
   createCompany: (companyData: Omit<Company, "id">) => Promise<boolean>
-  logout: () => void
+  logout: () => Promise<void>
   isLoading: boolean
   needsVerification: boolean
   needsOnboarding: boolean
@@ -45,115 +44,77 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [needsOnboarding, setNeedsOnboarding] = useState(false)
 
   useEffect(() => {
-    // Check for existing session
-    const savedUser = localStorage.getItem("upsell-user")
-    const savedCompany = localStorage.getItem("upsell-company")
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const currentUser = session?.user ?? null
+      setUser(currentUser as User)
+      setIsLoading(false)
 
-    if (savedUser) {
-      const userData = JSON.parse(savedUser)
-      setUser(userData)
-
-      if (!userData.isVerified) {
-        setNeedsVerification(true)
-      } else if (!userData.companyId && !savedCompany) {
-        setNeedsOnboarding(true)
+      if (currentUser) {
+        // TODO: Fetch company data based on user's companyId
+      } else {
+        setCompany(null)
       }
-    }
+    })
 
-    if (savedCompany) {
-      setCompany(JSON.parse(savedCompany))
+    return () => {
+      authListener.subscription.unsubscribe()
     }
-
-    setIsLoading(false)
   }, [])
 
-  const signup = async (name: string, email: string, password: string): Promise<boolean> => {
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    const userData: User = {
+  const signup = async (name: string, email: string, password: string) => {
+    const { data, error } = await supabase.auth.signUp({
       email,
-      name,
-      isVerified: false,
+      password,
+      options: {
+        data: {
+          full_name: name,
+        },
+      },
+    })
+
+    if (error) {
+      return { success: false, error: error.message }
     }
 
-    setUser(userData)
-    setNeedsVerification(true)
-    localStorage.setItem("upsell-user", JSON.stringify(userData))
-    return true
+    // Check if user needs verification
+    if (data.user && !data.user.email_confirmed_at) {
+        setNeedsVerification(true);
+    }
+
+    return { success: true, error: null }
   }
 
   const verifyEmail = async (code: string): Promise<boolean> => {
-    // Simulate verification - accept any 6-digit code
-    if (code.length === 6) {
-      const verifiedUser = { ...user!, isVerified: true }
-      setUser(verifiedUser)
-      setNeedsVerification(false)
-      setNeedsOnboarding(true)
-      localStorage.setItem("upsell-user", JSON.stringify(verifiedUser))
-      return true
-    }
-    return false
-  }
-
-  const createCompany = async (companyData: Omit<Company, "id">): Promise<boolean> => {
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-
-    const newCompany: Company = {
-      ...companyData,
-      id: Math.random().toString(36).substr(2, 9),
-    }
-
-    const updatedUser = { ...user!, companyId: newCompany.id }
-
-    setCompany(newCompany)
-    setUser(updatedUser)
-    setNeedsOnboarding(false)
-
-    localStorage.setItem("upsell-company", JSON.stringify(newCompany))
-    localStorage.setItem("upsell-user", JSON.stringify(updatedUser))
-
+    // This will be handled by Supabase's email verification link.
+    // We might need a page to handle the verification callback.
+    console.log("Verification code:", code)
     return true
   }
 
-  const login = async (email: string, password: string): Promise<boolean> => {
-    // Demo credentials
-    if (email === "admin@upsell.ai" && password === "12345678") {
-      const userData: User = {
-        email,
-        name: "Admin User",
-        isVerified: true,
-        companyId: "demo-company",
-      }
-      const companyData: Company = {
-        id: "demo-company",
-        name: "Demo Restaurant",
-        address: "123 Main St, City, State 12345",
-        phone: "+1 (555) 123-4567",
-        email: "demo@restaurant.com",
-        deliveryRange: 5,
-        deliveryFee: 5.0,
-        minOrder: 15.0,
-        freeDeliveryThreshold: 30.0,
-      }
-
-      setUser(userData)
-      setCompany(companyData)
-      localStorage.setItem("upsell-user", JSON.stringify(userData))
-      localStorage.setItem("upsell-company", JSON.stringify(companyData))
-      return true
-    }
-    return false
+  const createCompany = async (companyData: Omit<Company, "id">): Promise<boolean> => {
+    // TODO: Implement company creation logic
+    console.log("Company data:", companyData)
+    return true
   }
 
-  const logout = () => {
+  const login = async (email: string, password: string) => {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    setUser(data.user as User)
+    return { success: true, error: null }
+  }
+
+  const logout = async () => {
+    await supabase.auth.signOut()
     setUser(null)
     setCompany(null)
-    setNeedsVerification(false)
-    setNeedsOnboarding(false)
-    localStorage.removeItem("upsell-user")
-    localStorage.removeItem("upsell-company")
   }
 
   return (

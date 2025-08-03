@@ -19,7 +19,19 @@ This checklist outlines the features that need to be migrated from the `lib/demo
   - [ ] Migrate `Offer` interface
   - [ ] Migrate `demoOffers` data
 
-### 2. Customers
+### 2. Authentication
+- [ ] **User Sign-up & Sign-in**
+  - [ ] Replace mock `login` function with Supabase Auth
+  - [ ] Replace mock `signup` function with Supabase Auth
+  - [ ] Implement Supabase session management
+- [ ] **User Profile**
+  - [ ] Create a `profiles` table for user data
+  - [ ] Link profiles to `auth.users`
+- [ ] **Onboarding Flow**
+  - [ ] Replace mock `verifyEmail` function
+  - [ ] Replace mock `createCompany` function
+
+### 3. Customers
 
 - [ ] **Customers**
   - [ ] Migrate `Customer` interface
