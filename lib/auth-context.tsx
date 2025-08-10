@@ -6,7 +6,7 @@ import { supabase } from "./supabase-client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
 interface User extends SupabaseUser {
-  // Add any custom user properties here if needed in the future
+  companyId?: string;
 }
 
 interface Company {
@@ -27,7 +27,6 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<{ success: boolean; error: string | null }>
   signup: (name: string, email: string, password: string) => Promise<{ success: boolean; error: string | null }>
   verifyEmail: (email: string, code: string) => Promise<{ success: boolean; error: string | null }>
-  createCompany: (companyData: Omit<Company, "id">) => Promise<boolean>
   logout: () => Promise<void>
   isLoading: boolean
   needsVerification: boolean
@@ -45,21 +44,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      const currentUser = session?.user ?? null
-      setUser(currentUser as User)
-      setIsLoading(false)
+      const currentUser = session?.user ?? null;
+      setUser(currentUser as User);
+      setIsLoading(false);
 
       if (currentUser) {
-        // TODO: Fetch company data based on user's companyId
+        const { data: staffData, error: staffError } = await supabase
+          .from('staff')
+          .select('*, companies(*)')
+          .eq('user_id', currentUser.id)
+          .single();
+
+        if (staffData) {
+          const companyData = staffData.companies;
+          setUser(prevUser => ({ ...prevUser!, companyId: companyData.id }));
+          setCompany(companyData);
+
+          // Check if the company name is the default one
+          if (companyData.name.endsWith("'s Company")) {
+            setNeedsOnboarding(true);
+          } else {
+            setNeedsOnboarding(false);
+          }
+        } else if (staffError) {
+          console.error('Error fetching staff data:', staffError.message);
+        }
       } else {
-        setCompany(null)
+        setCompany(null);
+        setUser(null);
       }
-    })
+    });
 
     return () => {
-      authListener.subscription.unsubscribe()
-    }
-  }, [])
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   const signup = async (name: string, email: string, password: string) => {
     const { data, error } = await supabase.auth.signUp({
@@ -103,12 +122,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { success: true, error: null }
   }
 
-  const createCompany = async (companyData: Omit<Company, "id">): Promise<boolean> => {
-    // TODO: Implement company creation logic
-    console.log("Company data:", companyData)
-    return true
-  }
-
   const login = async (email: string, password: string) => {
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
@@ -137,7 +150,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         login,
         signup,
         verifyEmail,
-        createCompany,
         logout,
         isLoading,
         needsVerification,
