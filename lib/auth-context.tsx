@@ -26,7 +26,7 @@ interface AuthContextType {
   company: Company | null
   login: (email: string, password: string) => Promise<{ success: boolean; error: string | null }>
   signup: (name: string, email: string, password: string) => Promise<{ success: boolean; error: string | null }>
-  verifyEmail: (code: string) => Promise<boolean>
+  verifyEmail: (email: string, code: string) => Promise<{ success: boolean; error: string | null }>
   createCompany: (companyData: Omit<Company, "id">) => Promise<boolean>
   logout: () => Promise<void>
   isLoading: boolean
@@ -84,11 +84,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { success: true, error: null }
   }
 
-  const verifyEmail = async (code: string): Promise<boolean> => {
-    // This will be handled by Supabase's email verification link.
-    // We might need a page to handle the verification callback.
-    console.log("Verification code:", code)
-    return true
+  const verifyEmail = async (email: string, code: string) => {
+    const { data, error } = await supabase.auth.verifyOtp({
+      email,
+      token: code,
+      type: "signup",
+    })
+
+    if (error) {
+      return { success: false, error: error.message }
+    }
+
+    if (data.user) {
+      setUser(data.user as User)
+      setNeedsVerification(false)
+    }
+
+    return { success: true, error: null }
   }
 
   const createCompany = async (companyData: Omit<Company, "id">): Promise<boolean> => {

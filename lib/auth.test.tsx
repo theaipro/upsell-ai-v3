@@ -95,4 +95,27 @@ describe('AuthProvider', () => {
       await auth.logout();
     });
   });
+
+  it('should return an error for an invalid verification code', async () => {
+    let auth;
+    const onAuthLoad = (a) => (auth = a);
+    render(
+      <AuthProvider>
+        <TestComponent onAuthLoad={onAuthLoad} />
+      </AuthProvider>
+    );
+
+    await waitFor(() => expect(auth).toBeDefined());
+    await waitFor(() => expect(auth.isLoading).toBe(false));
+
+    let success, error;
+    await act(async () => {
+      const result = await auth.verifyEmail(testEmail, '000000');
+      success = result.success;
+      error = result.error;
+    });
+
+    expect(success).toBe(false);
+    expect(error).not.toBeNull();
+  });
 });
