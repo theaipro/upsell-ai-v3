@@ -46,7 +46,7 @@ export default function SignUpPage() {
     const { success, error } = await signup(formData.name, formData.email, formData.password)
 
     if (success) {
-      router.push("/verify")
+      router.push(`/verify?email=${formData.email}`)
     } else if (error) {
       setError(error)
     } else {
