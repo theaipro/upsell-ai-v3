@@ -3,6 +3,36 @@ import { render, act } from '@testing-library/react';
 import { AuthProvider, useAuth } from './auth-context';
 import { supabase } from './supabase-client';
 
+// Mock the supabase client
+jest.mock('./supabase-client', () => ({
+  supabase: {
+    auth: {
+      signUp: jest.fn().mockResolvedValue({ data: { user: { id: '123', email_confirmed_at: null } }, error: null }),
+      signInWithPassword: jest.fn().mockResolvedValue({ data: { user: { id: '123' } }, error: null }),
+      signOut: jest.fn().mockResolvedValue({ error: null }),
+      verifyOtp: jest.fn().mockImplementation((params) => {
+        if (params.token === '000000') {
+          return Promise.resolve({ error: { message: 'Invalid token' } });
+        }
+        return Promise.resolve({ data: { user: { id: '123' } }, error: null });
+      }),
+      onAuthStateChange: jest.fn((callback) => {
+        // Immediately call the callback with a mock session
+        Promise.resolve().then(() => callback('INITIAL_SESSION', { user: null }));
+        return {
+          data: { subscription: { unsubscribe: jest.fn() } },
+        };
+      }),
+    },
+    from: jest.fn(() => ({
+      insert: jest.fn().mockResolvedValue({ data: [{ id: 'company-123' }], error: null }),
+      select: jest.fn().mockReturnThis(),
+      single: jest.fn().mockResolvedValue({ data: { id: 'company-123' }, error: null }),
+    })),
+  },
+}));
+
+
 // Generate a random email for each test run
 const testEmail = `testuser_${Date.now()}@mailinator.com`;
 const testPassword = 'password123';
@@ -45,18 +75,6 @@ describe('AuthProvider', () => {
   });
 
   it('should log in an existing user', async () => {
-    // Sign up the user first to ensure they exist
-    await supabase.auth.signUp({
-      email: testEmail,
-      password: testPassword,
-      options: {
-        emailRedirectTo: 'http://localhost:3000/',
-        data: {
-          email_confirm: false,
-        },
-      },
-    });
-
     let auth;
     const onAuthLoad = (a) => (auth = a);
     render(

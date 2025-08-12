@@ -183,6 +183,9 @@ importers:
       '@types/react-dom':
         specifier: ^19
         version: 19.0.0
+      babel-jest:
+        specifier: ^30.0.5
+        version: 30.0.5(@babel/core@7.28.0)
       dotenv:
         specifier: ^17.2.1
         version: 17.2.1

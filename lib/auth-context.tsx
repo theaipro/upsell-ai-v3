@@ -65,20 +65,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: {
-          full_name: name,
-        },
-      },
     })
 
     if (error) {
       return { success: false, error: error.message }
     }
 
+    // Store user's name for onboarding
+    if (typeof window !== "undefined") {
+      localStorage.setItem("userNameForOnboarding", name)
+    }
+
     // Check if user needs verification
     if (data.user && !data.user.email_confirmed_at) {
-        setNeedsVerification(true);
+      setNeedsVerification(true)
     }
 
     return { success: true, error: null }
@@ -104,8 +104,79 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   const createCompany = async (companyData: Omit<Company, "id">): Promise<boolean> => {
-    // TODO: Implement company creation logic
-    console.log("Company data:", companyData)
+    if (!user) {
+      console.error("No user logged in to create a company.")
+      return false
+    }
+
+    // Insert new company
+    const { data: newCompany, error: companyError } = await supabase
+      .from("companies")
+      .insert([
+        {
+          name: companyData.name,
+          address: companyData.address,
+          phone: companyData.phone,
+          email: companyData.email,
+          delivery_range: companyData.deliveryRange,
+          delivery_fee: companyData.deliveryFee,
+          min_order_value: companyData.minOrder,
+          free_delivery_threshold: companyData.freeDeliveryThreshold,
+        },
+      ])
+      .select()
+      .single()
+
+    if (companyError || !newCompany) {
+      console.error("Error creating company:", companyError)
+      return false
+    }
+
+    // Retrieve user's name from local storage
+    const userName =
+      typeof window !== "undefined" ? localStorage.getItem("userNameForOnboarding") : null
+
+    const staffName = userName || user.email || "Owner"
+
+    // Create staff entry for the owner
+    const { error: staffError } = await supabase.from("staff").insert([
+      {
+        company_id: newCompany.id,
+        user_id: user.id,
+        name: staffName,
+        email: user.email,
+        role: "owner",
+        status: "active",
+        joined_at: new Date().toISOString(),
+      },
+    ])
+
+    if (staffError) {
+      console.error("Error creating staff entry:", staffError)
+      // Ideally, rollback company creation in a transaction
+      return false
+    }
+
+    // Clean up local storage
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("userNameForOnboarding")
+    }
+
+    const companyForState: Company = {
+      id: newCompany.id,
+      name: newCompany.name,
+      address: newCompany.address,
+      phone: newCompany.phone,
+      email: newCompany.email,
+      deliveryRange: newCompany.delivery_range,
+      deliveryFee: newCompany.delivery_fee,
+      minOrder: newCompany.min_order_value,
+      freeDeliveryThreshold: newCompany.free_delivery_threshold,
+    }
+
+    setCompany(companyForState)
+    setNeedsOnboarding(false)
+
     return true
   }
 
