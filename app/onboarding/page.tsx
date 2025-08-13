@@ -57,14 +57,15 @@ export default function OnboardingPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
-  const { user, createCompany } = useAuth()
+  const { user, createCompany, company, needsOnboarding, isLoading } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
-    if (!user || !user.isVerified || user.companyId) {
-      router.push("/")
+    // Redirect if user is loaded and has a company, or if they don't need onboarding
+    if (!isLoading && (company || !needsOnboarding)) {
+      router.push("/dashboard")
     }
-  }, [user, router])
+  }, [user, company, needsOnboarding, isLoading, router])
 
   const totalSteps = 4
   const progress = (currentStep / totalSteps) * 100

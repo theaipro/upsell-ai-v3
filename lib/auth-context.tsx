@@ -50,9 +50,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false)
 
       if (currentUser) {
-        // TODO: Fetch company data based on user's companyId
+        // Fetch staff and company details
+        const { data: staffData, error: staffError } = await supabase
+          .from("staff")
+          .select(`*, companies(*)`)
+          .eq("user_id", currentUser.id)
+          .single()
+
+        if (staffError && staffError.code !== "PGRST116") { // PGRST116 = 'single row not found'
+          console.error("Error fetching staff data:", staffError)
+          setCompany(null)
+          setNeedsOnboarding(false) // Unsure, may need onboarding
+        } else if (staffData && staffData.companies) {
+          const fetchedCompany = staffData.companies
+          const companyForState: Company = {
+            id: fetchedCompany.id,
+            name: fetchedCompany.name,
+            address: fetchedCompany.address || "",
+            phone: fetchedCompany.phone || "",
+            email: fetchedCompany.email || "",
+            deliveryRange: fetchedCompany.delivery_range || 0,
+            deliveryFee: fetchedCompany.delivery_fee || 0,
+            minOrder: fetchedCompany.min_order_value || 0,
+            freeDeliveryThreshold: fetchedCompany.free_delivery_threshold || 0,
+          }
+          setCompany(companyForState)
+          setNeedsOnboarding(false)
+        } else {
+          // No staff record or no associated company
+          setCompany(null)
+          setNeedsOnboarding(true)
+        }
       } else {
         setCompany(null)
+        setNeedsOnboarding(false)
       }
     })
 
@@ -109,51 +140,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return false
     }
 
-    // Insert new company
-    const { data: newCompany, error: companyError } = await supabase
-      .from("companies")
-      .insert([
-        {
-          name: companyData.name,
-          address: companyData.address,
-          phone: companyData.phone,
-          email: companyData.email,
-          delivery_range: companyData.deliveryRange,
-          delivery_fee: companyData.deliveryFee,
-          min_order_value: companyData.minOrder,
-          free_delivery_threshold: companyData.freeDeliveryThreshold,
-        },
-      ])
-      .select()
-      .single()
-
-    if (companyError || !newCompany) {
-      console.error("Error creating company:", companyError)
-      return false
-    }
-
-    // Retrieve user's name from local storage
+    // Retrieve user's name from local storage, with fallbacks.
     const userName =
       typeof window !== "undefined" ? localStorage.getItem("userNameForOnboarding") : null
-
     const staffName = userName || user.email || "Owner"
 
-    // Create staff entry for the owner
-    const { error: staffError } = await supabase.from("staff").insert([
-      {
-        company_id: newCompany.id,
-        user_id: user.id,
-        name: staffName,
-        email: user.email,
-        role: "owner",
-        status: "active",
-        joined_at: new Date().toISOString(),
-      },
-    ])
+    // Call the transactional database function
+    const { data: newCompanyId, error } = await supabase.rpc("create_company_for_user", {
+      company_name: companyData.name,
+      company_address: companyData.address,
+      company_phone: companyData.phone,
+      company_email: companyData.email,
+      company_delivery_range: companyData.deliveryRange,
+      company_delivery_fee: companyData.deliveryFee,
+      company_min_order_value: companyData.minOrder,
+      company_free_delivery_threshold: companyData.freeDeliveryThreshold,
+      admin_name: staffName,
+    })
 
-    if (staffError) {
-      console.error("Error creating staff entry:", staffError)
-      // Ideally, rollback company creation in a transaction
+    if (error) {
+      console.error("Error creating company:", error)
       return false
     }
 
@@ -162,16 +168,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem("userNameForOnboarding")
     }
 
+    // Optimistically update the company state.
+    // A full fetch might be better for production to ensure data consistency.
     const companyForState: Company = {
-      id: newCompany.id,
-      name: newCompany.name,
-      address: newCompany.address,
-      phone: newCompany.phone,
-      email: newCompany.email,
-      deliveryRange: newCompany.delivery_range,
-      deliveryFee: newCompany.delivery_fee,
-      minOrder: newCompany.min_order_value,
-      freeDeliveryThreshold: newCompany.free_delivery_threshold,
+      id: newCompanyId,
+      ...companyData,
     }
 
     setCompany(companyForState)
