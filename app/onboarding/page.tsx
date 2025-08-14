@@ -54,7 +54,7 @@ export default function OnboardingPage() {
   const [companyData, setCompanyData] = useState<CompanyFormData>(initialCompanyData)
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([])
   const [newStaffMember, setNewStaffMember] = useState<StaffMember>(initialStaffMember)
-  const [isLoading, setIsLoading] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   const { user, createCompany, company, needsOnboarding, isLoading } = useAuth()
