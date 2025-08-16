@@ -11,13 +11,14 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Slider } from "@/components/ui/slider"
 import { ArrowRight, ArrowLeft, Building2, Phone, Truck, Users, CheckCircle } from "lucide-react"
-import { useAuth } from "@/lib/auth-context"
+import { createClient } from "@/lib/supabase/client"
 
 interface CompanyFormData {
   name: string
   address: string
   phone: string
   email: string
+  website: string
   deliveryRange: number
   deliveryFee: number
   minOrder: number
@@ -36,6 +37,7 @@ const initialCompanyData: CompanyFormData = {
   address: "",
   phone: "",
   email: "",
+  website: "",
   deliveryRange: 5,
   deliveryFee: 5.0,
   minOrder: 15.0,
@@ -56,15 +58,54 @@ export default function OnboardingPage() {
   const [newStaffMember, setNewStaffMember] = useState<StaffMember>(initialStaffMember)
   const [isLoading, setIsLoading] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [user, setUser] = useState<any>(null)
 
-  const { user, createCompany } = useAuth()
   const router = useRouter()
+  const supabase = createClient()
 
   useEffect(() => {
-    if (!user || !user.isVerified || user.companyId) {
-      router.push("/")
+    const checkUser = async () => {
+      try {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession()
+
+        if (sessionError) {
+          console.error("Session error:", sessionError)
+          router.push("/auth/login")
+          return
+        }
+
+        if (!session?.user) {
+          router.push("/auth/login")
+          return
+        }
+
+        const user = session.user
+
+        // Check if user has already completed onboarding via metadata
+        if (user.user_metadata?.onboarding_completed === true) {
+          router.push("/dashboard")
+          return
+        }
+
+        setUser(user)
+
+        // Pre-fill email with user's email
+        setCompanyData((prev) => ({
+          ...prev,
+          email: user.email || "",
+        }))
+      } catch (error) {
+        console.error("Auth check error:", error)
+        // Don't redirect on network errors, let user continue with onboarding
+        console.log("Continuing with onboarding despite auth check error")
+      }
     }
-  }, [user, router])
+
+    checkUser()
+  }, [router, supabase])
 
   const totalSteps = 4
   const progress = (currentStep / totalSteps) * 100
@@ -117,22 +158,68 @@ export default function OnboardingPage() {
     setIsLoading(true)
 
     try {
-      const success = await createCompany(companyData)
-      if (success) {
-        // Store staff members for later use
-        if (staffMembers.length > 0) {
-          localStorage.setItem("pending-staff-invites", JSON.stringify(staffMembers))
-        }
-        router.push("/dashboard")
+      const { data: result, error } = await supabase.rpc("complete_user_onboarding", {
+        company_name: companyData.name,
+        company_address: companyData.address,
+        company_phone: companyData.phone,
+        company_email: companyData.email,
+        company_website: companyData.website || null,
+        company_industry: "Restaurant",
+        company_size: "Small",
+        delivery_range: companyData.deliveryRange,
+        delivery_fee: companyData.deliveryFee,
+        min_order_value: companyData.minOrder,
+        free_delivery_threshold: companyData.freeDeliveryThreshold,
+        staff_members: staffMembers,
+      })
+
+      if (error) {
+        console.error("Onboarding error:", error)
+        setErrors({ general: "Failed to complete onboarding. Please try again." })
+        return
       }
+
+      // Check if the function returned an error in the result
+      if (result && !result.success) {
+        console.error("Onboarding function error:", result.error)
+        setErrors({ general: result.message || "Failed to complete onboarding. Please try again." })
+        return
+      }
+
+      const companyId = result?.company_id
+
+      const { error: updateError } = await supabase.auth.updateUser({
+        data: {
+          onboarding_completed: true,
+          company_id: companyId,
+        },
+      })
+
+      if (updateError) {
+        console.error("Failed to update user metadata:", updateError)
+        // Continue anyway as the main onboarding is complete
+      }
+
+      // Redirect to dashboard
+      router.push("/dashboard")
     } catch (error) {
-      console.error("Failed to create company:", error)
+      console.error("Failed to complete onboarding:", error)
+      setErrors({ general: "An unexpected error occurred. Please try again." })
     } finally {
       setIsLoading(false)
     }
   }
 
-  if (!user) return null
+  if (!user && !errors.general) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-8">
@@ -161,6 +248,12 @@ export default function OnboardingPage() {
 
         <Card className="border-0 shadow-xl bg-white">
           <CardContent className="p-8">
+            {errors.general && (
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-red-600 text-sm">{errors.general}</p>
+              </div>
+            )}
+
             {/* Step 1: Basic Information */}
             {currentStep === 1 && (
               <div className="space-y-6">
@@ -215,34 +308,50 @@ export default function OnboardingPage() {
                   <p className="text-gray-600">How can customers reach you?</p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="phone" className="text-gray-700 font-medium">
-                      Phone Number *
-                    </Label>
-                    <Input
-                      id="phone"
-                      value={companyData.phone}
-                      onChange={(e) => handleCompanyDataChange("phone", e.target.value)}
-                      placeholder="+1 (555) 123-4567"
-                      className={`h-12 ${errors.phone ? "border-red-300 focus:border-red-500" : "border-gray-200 focus:border-black"} focus:ring-black/10 transition-colors`}
-                    />
-                    {errors.phone && <p className="text-red-500 text-sm">{errors.phone}</p>}
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="phone" className="text-gray-700 font-medium">
+                        Phone Number *
+                      </Label>
+                      <Input
+                        id="phone"
+                        value={companyData.phone}
+                        onChange={(e) => handleCompanyDataChange("phone", e.target.value)}
+                        placeholder="+1 (555) 123-4567"
+                        className={`h-12 ${errors.phone ? "border-red-300 focus:border-red-500" : "border-gray-200 focus:border-black"} focus:ring-black/10 transition-colors`}
+                      />
+                      {errors.phone && <p className="text-red-500 text-sm">{errors.phone}</p>}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="email" className="text-gray-700 font-medium">
+                        Business Email *
+                      </Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        value={companyData.email}
+                        onChange={(e) => handleCompanyDataChange("email", e.target.value)}
+                        placeholder="contact@restaurant.com"
+                        className={`h-12 ${errors.email ? "border-red-300 focus:border-red-500" : "border-gray-200 focus:border-black"} focus:ring-black/10 transition-colors`}
+                      />
+                      {errors.email && <p className="text-red-500 text-sm">{errors.email}</p>}
+                    </div>
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="email" className="text-gray-700 font-medium">
-                      Business Email *
+                    <Label htmlFor="website" className="text-gray-700 font-medium">
+                      Website (Optional)
                     </Label>
                     <Input
-                      id="email"
-                      type="email"
-                      value={companyData.email}
-                      onChange={(e) => handleCompanyDataChange("email", e.target.value)}
-                      placeholder="contact@restaurant.com"
-                      className={`h-12 ${errors.email ? "border-red-300 focus:border-red-500" : "border-gray-200 focus:border-black"} focus:ring-black/10 transition-colors`}
+                      id="website"
+                      type="url"
+                      value={companyData.website}
+                      onChange={(e) => handleCompanyDataChange("website", e.target.value)}
+                      placeholder="https://yourrestaurant.com"
+                      className="h-12 border-gray-200 focus:border-black focus:ring-black/10 transition-colors"
                     />
-                    {errors.email && <p className="text-red-500 text-sm">{errors.email}</p>}
                   </div>
                 </div>
               </div>
@@ -343,7 +452,9 @@ export default function OnboardingPage() {
                     <Users className="w-8 h-8 text-orange-600" />
                   </div>
                   <h2 className="text-2xl font-bold text-gray-900 mb-2">Invite Your Team</h2>
-                  <p className="text-gray-600">Add staff members to get started (optional)</p>
+                  <p className="text-gray-600">
+                    You'll be set as the company owner. Add additional staff members if needed.
+                  </p>
                 </div>
 
                 <div className="space-y-6">
@@ -454,8 +565,8 @@ export default function OnboardingPage() {
                   {staffMembers.length === 0 && (
                     <div className="text-center py-8 text-gray-500">
                       <Users className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                      <p>No staff members added yet</p>
-                      <p className="text-sm">You can always invite team members later from settings</p>
+                      <p>You are the only member in this company</p>
+                      <p className="text-sm">Add your staff members or invite them later from settings</p>
                     </div>
                   )}
                 </div>

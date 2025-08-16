@@ -25,8 +25,20 @@ import {
 import { cn } from "@/lib/utils"
 
 import type { Customer } from "@/lib/demo-data"
-// Add the import statement for the new utility function
 import { handleNullValue } from "@/lib/null-value-handler"
+import { createClient } from "@/lib/supabase/client"
+import { useEffect, useState } from "react"
+
+interface Order {
+  id: string
+  created_at: string
+  total_amount: number
+  status: string
+  order_items: {
+    product_name: string
+    quantity: number
+  }[]
+}
 
 interface CustomerProfilePanelProps {
   customer: Customer | null
@@ -43,44 +55,6 @@ const statusConfig = {
   vip: { label: "VIP", color: "bg-purple-100 text-purple-800 border-purple-200", icon: Crown },
 }
 
-const mockOrderHistory = [
-  {
-    id: "1001",
-    date: "2024-01-20",
-    total: 34.99,
-    status: "Delivered",
-    items: ["Margherita Pizza", "Caesar Salad"],
-  },
-  {
-    id: "1002",
-    date: "2024-01-18",
-    total: 28.5,
-    status: "Delivered",
-    items: ["Chicken Burger", "Fries"],
-  },
-  {
-    id: "1003",
-    date: "2024-01-15",
-    total: 42.75,
-    status: "Delivered",
-    items: ["Pasta Carbonara", "Garlic Bread", "Tiramisu"],
-  },
-  {
-    id: "1004",
-    date: "2024-01-12",
-    total: 19.99,
-    status: "Delivered",
-    items: ["Thai Curry", "Spring Rolls"],
-  },
-  {
-    id: "1005",
-    date: "2024-01-10",
-    total: 52.25,
-    status: "Delivered",
-    items: ["Ribeye Steak", "Mashed Potatoes", "Red Wine"],
-  },
-]
-
 export function CustomerProfilePanel({
   customer,
   isOpen,
@@ -89,6 +63,63 @@ export function CustomerProfilePanel({
   onDelete,
   onStartChat,
 }: CustomerProfilePanelProps) {
+  const [orders, setOrders] = useState<Order[]>([])
+  const [loadingOrders, setLoadingOrders] = useState(false)
+  const supabase = createClient()
+
+  const fetchCustomerOrders = async () => {
+    if (!customer?.id) return
+
+    setLoadingOrders(true)
+    try {
+
+      const { data, error } = await supabase.from("customers").select("recent_orders_history").eq("id", customer.id)
+
+      if (error) {
+        console.log("[v0] Supabase error:", error)
+        throw error
+      }
+
+      if (!data || data.length === 0) {
+        setOrders([])
+        return
+      }
+
+      const customerData = data[0]
+      const ordersHistory = customerData?.recent_orders_history || []
+
+      const transformedOrders = Array.isArray(ordersHistory)
+        ? ordersHistory.map((order: any) => ({
+            id: order.order_id || order.id,
+            created_at: order.order_date || order.created_at,
+            total_amount: order.total_price || order.total_amount,
+            status: order.status,
+            order_items: order.items_summary
+              ? [
+                  {
+                    product_name: order.items_summary,
+                    quantity: 1,
+                  },
+                ]
+              : [],
+          }))
+        : []
+
+      setOrders(transformedOrders)
+    } catch (error) {
+      console.error("Error fetching orders history:", error)
+      setOrders([])
+    } finally {
+      setLoadingOrders(false)
+    }
+  }
+
+  useEffect(() => {
+    if (customer?.id && isOpen) {
+      fetchCustomerOrders()
+    }
+  }, [customer?.id, isOpen])
+
   if (!customer) return null
 
   const config = statusConfig[customer.status]
@@ -390,29 +421,47 @@ export function CustomerProfilePanel({
             <TabsContent value="orders" className="p-6 flex-1">
               <div className="space-y-4">
                 <h3 className="font-semibold text-gray-900">Order History</h3>
-                <div className="space-y-3">
-                  {mockOrderHistory.map((order) => (
-                    <Card key={order.id} className="border-0 bg-gray-50">
-                      <CardContent className="p-4">
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <p className="font-medium">Order #{order.id}</p>
-                            <p className="text-sm text-gray-600">{new Date(order.date).toLocaleDateString()}</p>
+                {loadingOrders ? (
+                  <div className="text-center py-8">
+                    <p className="text-gray-500">Loading orders...</p>
+                  </div>
+                ) : orders.length > 0 ? (
+                  <div className="space-y-3">
+                    {orders.map((order) => (
+                      <Card key={order.id} className="border-0 bg-gray-50">
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <p className="font-medium">Order #{order.id}</p>
+                              <p className="text-sm text-gray-600">{new Date(order.created_at).toLocaleDateString()}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-medium">${order.total_amount}</p>
+                              <Badge variant="outline" className="text-xs">
+                                {order.status}
+                              </Badge>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <p className="font-medium">${order.total}</p>
-                            <Badge variant="outline" className="text-xs">
-                              {order.status}
-                            </Badge>
+                          <div className="text-sm text-gray-600">
+                            <p>
+                              Items:{" "}
+                              {order.order_items?.map((item) => `${item.product_name} (${item.quantity})`).join(", ") ||
+                                "No items"}
+                            </p>
                           </div>
-                        </div>
-                        <div className="text-sm text-gray-600">
-                          <p>Items: {order.items.join(", ")}</p>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <ShoppingBag size={48} className="mx-auto text-gray-300 mb-4" />
+                    <p className="text-gray-500 font-medium">User didn't order yet</p>
+                    <p className="text-sm text-gray-400 mt-1">
+                      Orders will appear here once the customer makes their first purchase
+                    </p>
+                  </div>
+                )}
               </div>
             </TabsContent>
 

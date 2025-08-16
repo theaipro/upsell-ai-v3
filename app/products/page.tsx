@@ -1,14 +1,12 @@
 "use client"
 
-import React from "react"
-import { useState } from "react"
-import { FloatingSidebar } from "@/components/floating-sidebar"
+import React, { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Dialog,
@@ -20,14 +18,14 @@ import {
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
+import { useToast } from "@/hooks/use-toast"
+import { createClient } from "@/lib/supabase/client"
+import { Plus, Search, Edit, Trash2, Star, DollarSign, Package } from "lucide-react"
+import { FloatingSidebar } from "@/components/floating-sidebar"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import {
-  Plus,
-  Search,
-  Edit,
-  Trash2,
-  Save,
-  X,
+  ChevronDown,
+  ChevronUp,
   Tag,
   Percent,
   Truck,
@@ -36,22 +34,49 @@ import {
   Coffee,
   Utensils,
   Dessert,
-  ChevronDown,
-  ChevronUp,
+  X,
+  Save,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import {
-  demoProducts,
-  demoOffers,
-  demoProductSubscriptions,
-  demoProductCategories,
-  type Product,
-  type Offer,
-  type ProductSubscription,
-} from "@/lib/demo-data"
 
-// Add the import statement for the new utility function
-import { handleNullValue } from "@/lib/null-value-handler"
+interface Product {
+  id: string
+  company_id: string
+  name: string
+  description: string
+  price: number
+  category: string
+  category_id?: string
+  image_url: string
+  is_available: boolean
+  is_featured: boolean
+  preparation_time: number
+  calories: number
+  protein: number
+  carbs: number
+  fat: number
+  tags: string[]
+  ingredients: string[]
+  allergens: string[]
+  dietary_info: string[]
+  variants: any
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+interface ProductAnalytics {
+  id: string
+  product_id: string
+  company_id: string
+  analysis_date: string
+  daily_revenue: number
+  daily_sales_count: number
+  daily_orders_containing_product: number
+  daily_favorites: number
+  daily_combo_added: number
+  daily_price_ask: number
+}
 
 interface ImportedItem {
   id: string
@@ -67,16 +92,41 @@ interface ImportedItem {
 
 interface Subscription {
   id: string
+  company_id: string
   name: string
   description: string
   price: number
-  billingCycle: string
+  billing_cycle: string
   features: string[]
   popular: boolean
   active: boolean
   category: string
-  trialDays?: number
-  setupFee?: number
+  trial_days?: number
+  setup_fee?: number
+  created_at: string
+  updated_at: string
+}
+
+interface Offer {
+  id: string
+  company_id: string
+  name: string
+  description: string
+  type: string
+  value: string
+  code?: string
+  start_date: string
+  end_date: string
+  active: boolean
+  applies_to: string
+  applies_to_value?: string
+  min_order_value: number
+  buy_products: { productId: string; quantity: number }[]
+  get_products: { productId: string; quantity: number }[]
+  buy_quantity: number
+  get_quantity: number
+  created_at: string
+  updated_at: string
 }
 
 const categoryIcons: Record<string, React.ElementType> = {
@@ -94,62 +144,48 @@ const offerTypeConfig = {
   buyXGetY: { label: "Buy X Get Y", icon: Tag, color: "bg-pink-100 text-pink-800 border-pink-200" },
 }
 
-const emptyProduct: Omit<
-  Product,
-  | "id"
-  | "company_id"
-  | "total_orders"
-  | "total_revenue"
-  | "sort_order"
-  | "monthly_data"
-  | "ai_recommendation_score"
-  | "ai_upsell_items"
-  | "customization_options"
-  | "allergens"
-  | "low_stock_threshold"
-  | "stock_quantity"
-  | "track_inventory"
-  | "image_url"
-  | "cost"
-> = {
+const emptyProduct: Omit<Product, "id" | "company_id" | "created_at" | "updated_at"> = {
   name: "",
   description: "",
   price: 0,
-  category_id: "",
+  category: "",
+  image_url: "",
   is_available: true,
   is_featured: false,
-  dietary_tags: [],
+  preparation_time: 0,
+  calories: 0,
+  protein: 0,
+  carbs: 0,
+  fat: 0,
   tags: [],
   ingredients: [],
-  nutritionalInfo: {
-    calories: 0,
-    protein: 0,
-    carbs: 0,
-    fat: 0,
-  },
+  allergens: [],
+  dietary_info: [],
+  variants: {},
+  sort_order: 0,
 }
 
-const emptyOffer: Omit<Offer, "id"> = {
+const emptyOffer: Omit<Offer, "id" | "company_id" | "created_at" | "updated_at"> = {
   name: "",
   description: "",
   type: "discount",
   value: "",
-  startDate: new Date().toISOString().split("T")[0],
-  endDate: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split("T")[0],
+  start_date: new Date().toISOString().split("T")[0],
+  end_date: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split("T")[0],
   active: true,
-  appliesTo: "all",
-  minOrderValue: 0,
-  buyProducts: [],
-  getProducts: [],
-  buyQuantity: 1,
-  getQuantity: 1,
+  applies_to: "all",
+  min_order_value: 0,
+  buy_products: [],
+  get_products: [],
+  buy_quantity: 1,
+  get_quantity: 1,
 }
 
-const emptySubscription: Omit<Subscription, "id"> = {
+const emptySubscription: Omit<Subscription, "id" | "company_id" | "created_at" | "updated_at"> = {
   name: "",
   description: "",
   price: 0,
-  billingCycle: "monthly",
+  billing_cycle: "monthly",
   features: [],
   popular: false,
   active: true,
@@ -161,10 +197,12 @@ const ProductForm = React.memo(
     product,
     setProduct,
     categories,
+    setIsAddCategoryDialogOpen,
   }: {
     product: Product | Omit<Product, "id">
     setProduct: (p: any) => void
-    categories: string[]
+    categories: Array<{ id: string; name: string }>
+    setIsAddCategoryDialogOpen: (open: boolean) => void
   }) => {
     const [tagInput, setTagInput] = useState("")
     const [ingredientInput, setIngredientInput] = useState("")
@@ -245,17 +283,29 @@ const ProductForm = React.memo(
             <Label htmlFor="category">Category</Label>
             <Select
               value={(product as Product).category_id}
-              onValueChange={(value) => setProduct({ ...product, category_id: value })}
+              onValueChange={(value) => {
+                if (value === "new-category") {
+                  setIsAddCategoryDialogOpen(true)
+                } else {
+                  setProduct({ ...product, category_id: value })
+                }
+              }}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Select category" />
               </SelectTrigger>
               <SelectContent>
-                {demoProductCategories.map((category) => (
+                {categories.map((category) => (
                   <SelectItem key={category.id} value={category.id}>
                     {category.name}
                   </SelectItem>
                 ))}
+                <SelectItem value="new-category" className="text-upsell-blue font-medium">
+                  <div className="flex items-center gap-2">
+                    <Plus size={16} />
+                    New Category
+                  </div>
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -367,14 +417,11 @@ const ProductForm = React.memo(
                   <Input
                     id="calories"
                     type="number"
-                    value={product.nutritionalInfo?.calories || 0}
+                    value={product.calories || 0}
                     onChange={(e) =>
                       setProduct({
                         ...product,
-                        nutritionalInfo: {
-                          ...(product.nutritionalInfo || { protein: 0, carbs: 0, fat: 0 }),
-                          calories: Number.parseInt(e.target.value) || 0,
-                        },
+                        calories: Number.parseInt(e.target.value) || 0,
                       })
                     }
                     className="text-sm"
@@ -387,14 +434,11 @@ const ProductForm = React.memo(
                   <Input
                     id="protein"
                     type="number"
-                    value={product.nutritionalInfo?.protein || 0}
+                    value={product.protein || 0}
                     onChange={(e) =>
                       setProduct({
                         ...product,
-                        nutritionalInfo: {
-                          ...(product.nutritionalInfo || { calories: 0, carbs: 0, fat: 0 }),
-                          protein: Number.parseInt(e.target.value) || 0,
-                        },
+                        protein: Number.parseInt(e.target.value) || 0,
                       })
                     }
                     className="text-sm"
@@ -407,14 +451,11 @@ const ProductForm = React.memo(
                   <Input
                     id="carbs"
                     type="number"
-                    value={product.nutritionalInfo?.carbs || 0}
+                    value={product.carbs || 0}
                     onChange={(e) =>
                       setProduct({
                         ...product,
-                        nutritionalInfo: {
-                          ...(product.nutritionalInfo || { calories: 0, protein: 0, fat: 0 }),
-                          carbs: Number.parseInt(e.target.value) || 0,
-                        },
+                        carbs: Number.parseInt(e.target.value) || 0,
                       })
                     }
                     className="text-sm"
@@ -427,14 +468,11 @@ const ProductForm = React.memo(
                   <Input
                     id="fat"
                     type="number"
-                    value={product.nutritionalInfo?.fat || 0}
+                    value={product.fat || 0}
                     onChange={(e) =>
                       setProduct({
                         ...product,
-                        nutritionalInfo: {
-                          ...(product.nutritionalInfo || { calories: 0, protein: 0, carbs: 0 }),
-                          fat: Number.parseInt(e.target.value) || 0,
-                        },
+                        fat: Number.parseInt(e.target.value) || 0,
                       })
                     }
                     className="text-sm"
@@ -465,18 +503,18 @@ const OfferForm = React.memo(
 
     const addBuyProduct = (productId: string) => {
       setOffer((prevOffer: any) => {
-        const existingProduct = prevOffer.buyProducts?.find((item: any) => item.productId === productId)
+        const existingProduct = prevOffer.buy_products?.find((item: any) => item.productId === productId)
         if (existingProduct) {
           return {
             ...prevOffer,
-            buyProducts: prevOffer.buyProducts?.map((item: any) =>
+            buy_products: prevOffer.buy_products?.map((item: any) =>
               item.productId === productId ? { ...item, quantity: item.quantity + 1 } : item,
             ),
           }
         } else {
           return {
             ...prevOffer,
-            buyProducts: [...(prevOffer.buyProducts || []), { productId, quantity: 1 }],
+            buy_products: [...(prevOffer.buy_products || []), { productId, quantity: 1 }],
           }
         }
       })
@@ -484,18 +522,18 @@ const OfferForm = React.memo(
 
     const addGetProduct = (productId: string) => {
       setOffer((prevOffer: any) => {
-        const existingProduct = prevOffer.getProducts?.find((item: any) => item.productId === productId)
+        const existingProduct = prevOffer.get_products?.find((item: any) => item.productId === productId)
         if (existingProduct) {
           return {
             ...prevOffer,
-            getProducts: prevOffer.getProducts?.map((item: any) =>
+            get_products: prevOffer.get_products?.map((item: any) =>
               item.productId === productId ? { ...item, quantity: item.quantity + 1 } : item,
             ),
           }
         } else {
           return {
             ...prevOffer,
-            getProducts: [...(prevOffer.getProducts || []), { productId, quantity: 1 }],
+            get_products: [...(prevOffer.get_products || []), { productId, quantity: 1 }],
           }
         }
       })
@@ -574,8 +612,8 @@ const OfferForm = React.memo(
             <Input
               id="startDate"
               type="date"
-              value={offer.startDate}
-              onChange={(e) => setOffer({ ...offer, startDate: e.target.value })}
+              value={offer.start_date}
+              onChange={(e) => setOffer({ ...offer, start_date: e.target.value })}
             />
           </div>
           <div className="space-y-2">
@@ -583,8 +621,8 @@ const OfferForm = React.memo(
             <Input
               id="endDate"
               type="date"
-              value={offer.endDate}
-              onChange={(e) => setOffer({ ...offer, endDate: e.target.value })}
+              value={offer.end_date}
+              onChange={(e) => setOffer({ ...offer, end_date: e.target.value })}
             />
           </div>
         </div>
@@ -607,7 +645,10 @@ const OfferForm = React.memo(
           <CollapsibleContent className="space-y-4 mt-4">
             <div className="space-y-2">
               <Label htmlFor="appliesTo">Applies To</Label>
-              <Select value={offer.appliesTo} onValueChange={(value: any) => setOffer({ ...offer, appliesTo: value })}>
+              <Select
+                value={offer.applies_to}
+                onValueChange={(value: any) => setOffer({ ...offer, applies_to: value })}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -619,12 +660,12 @@ const OfferForm = React.memo(
               </Select>
             </div>
 
-            {offer.appliesTo === "category" && (
+            {offer.applies_to === "category" && (
               <div className="space-y-2">
                 <Label htmlFor="appliesToValue">Category</Label>
                 <Select
-                  value={offer.appliesToValue || ""}
-                  onValueChange={(value) => setOffer({ ...offer, appliesToValue: value })}
+                  value={offer.applies_to_value || ""}
+                  onValueChange={(value) => setOffer({ ...offer, applies_to_value: value })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select category" />
@@ -640,12 +681,12 @@ const OfferForm = React.memo(
               </div>
             )}
 
-            {offer.appliesTo === "specific" && (
+            {offer.applies_to === "specific" && (
               <div className="space-y-2">
                 <Label htmlFor="appliesToValue">Product</Label>
                 <Select
-                  value={offer.appliesToValue || ""}
-                  onValueChange={(value) => setOffer({ ...offer, appliesToValue: value })}
+                  value={offer.applies_to_value || ""}
+                  onValueChange={(value) => setOffer({ ...offer, applies_to_value: value })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select product" />
@@ -667,8 +708,8 @@ const OfferForm = React.memo(
                 id="minOrderValue"
                 type="number"
                 step="0.01"
-                value={offer.minOrderValue || 0}
-                onChange={(e) => setOffer({ ...offer, minOrderValue: Number.parseFloat(e.target.value) || 0 })}
+                value={offer.min_order_value || 0}
+                onChange={(e) => setOffer({ ...offer, min_order_value: Number.parseFloat(e.target.value) || 0 })}
                 placeholder="25.00"
               />
               <p className="text-xs text-gray-500">Set to 0 for no minimum</p>
@@ -696,10 +737,10 @@ const OfferForm = React.memo(
                             </Button>
                           ))}
                         </div>
-                        {offer.buyProducts && offer.buyProducts.length > 0 && (
+                        {offer.buy_products && offer.buy_products.length > 0 && (
                           <div className="space-y-2">
                             <Label className="text-sm">Selected Buy Products:</Label>
-                            {offer.buyProducts.map((item, index) => {
+                            {offer.buy_products.map((item, index) => {
                               const product = products.find((p) => p.id === item.productId)
                               return (
                                 <div key={index} className="flex items-center justify-between bg-gray-50 p-2 rounded">
@@ -713,7 +754,7 @@ const OfferForm = React.memo(
                                     onClick={() =>
                                       setOffer({
                                         ...offer,
-                                        buyProducts: offer.buyProducts?.filter((_, i) => i !== index),
+                                        buy_products: offer.buy_products?.filter((_, i) => i !== index),
                                       })
                                     }
                                   >
@@ -743,10 +784,10 @@ const OfferForm = React.memo(
                         </Button>
                       ))}
                     </div>
-                    {offer.getProducts && offer.getProducts.length > 0 && (
+                    {offer.get_products && offer.get_products.length > 0 && (
                       <div className="space-y-2">
                         <Label className="text-sm">Selected Get Products:</Label>
-                        {offer.getProducts.map((item, index) => {
+                        {offer.get_products.map((item, index) => {
                           const product = products.find((p) => p.id === item.productId)
                           return (
                             <div key={index} className="flex items-center justify-between bg-gray-50 p-2 rounded">
@@ -760,7 +801,7 @@ const OfferForm = React.memo(
                                 onClick={() =>
                                   setOffer({
                                     ...offer,
-                                    getProducts: offer.getProducts?.filter((_, i) => i !== index),
+                                    get_products: offer.get_products?.filter((_, i) => i !== index),
                                   })
                                 }
                               >
@@ -790,7 +831,7 @@ const SubscriptionForm = React.memo(
   }: {
     subscription: Subscription | Omit<Subscription, "id">
     setSubscription: (s: any) => void
-    categories: string[]
+    categories: any[] // Updated type to handle category objects
   }) => {
     const [featureInput, setFeatureInput] = useState("")
     const [showAdvanced, setShowAdvanced] = useState(false)
@@ -852,8 +893,8 @@ const SubscriptionForm = React.memo(
           <div className="space-y-2">
             <Label htmlFor="sub-billing">Billing Cycle</Label>
             <Select
-              value={subscription.billingCycle}
-              onValueChange={(value: any) => setSubscription({ ...subscription, billingCycle: value })}
+              value={subscription.billing_cycle}
+              onValueChange={(value: any) => setSubscription({ ...subscription, billing_cycle: value })}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -877,14 +918,19 @@ const SubscriptionForm = React.memo(
               </SelectTrigger>
               <SelectContent>
                 {categories.map((category) => (
-                  <SelectItem key={category} value={category}>
-                    {category}
+                  <SelectItem
+                    key={typeof category === "string" ? category : category.id}
+                    value={typeof category === "string" ? category : category.name}
+                  >
+                    {typeof category === "string" ? category : category.name}
                   </SelectItem>
                 ))}
-                <SelectItem value="Beverage">Beverage</SelectItem>
-                <SelectItem value="Meal Kit">Meal Kit</SelectItem>
-                <SelectItem value="Experience">Experience</SelectItem>
-                <SelectItem value="Service">Service</SelectItem>
+                <SelectItem value="new-category">
+                  <div className="flex items-center gap-2">
+                    <Plus size={16} />
+                    New Category
+                  </div>
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -954,11 +1000,11 @@ const SubscriptionForm = React.memo(
                 <Input
                   id="trial-days"
                   type="number"
-                  value={subscription.trialDays || ""}
+                  value={subscription.trial_days || ""}
                   onChange={(e) =>
                     setSubscription({
                       ...subscription,
-                      trialDays: e.target.value ? Number.parseInt(e.target.value) : undefined,
+                      trial_days: e.target.value ? Number.parseInt(e.target.value) : undefined,
                     })
                   }
                   placeholder="7"
@@ -970,11 +1016,11 @@ const SubscriptionForm = React.memo(
                   id="setup-fee"
                   type="number"
                   step="0.01"
-                  value={subscription.setupFee || ""}
+                  value={subscription.setup_fee || ""}
                   onChange={(e) =>
                     setSubscription({
                       ...subscription,
-                      setupFee: e.target.value ? Number.parseFloat(e.target.value) : undefined,
+                      setup_fee: e.target.value ? Number.parseFloat(e.target.value) : undefined,
                     })
                   }
                   placeholder="9.99"
@@ -989,40 +1035,38 @@ const SubscriptionForm = React.memo(
 )
 
 export default function ProductsPage() {
+  const { toast } = useToast()
+  const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([])
+  const [products, setProducts] = useState<Product[]>([])
+  const [analytics, setAnalytics] = useState<ProductAnalytics[]>([])
+  const [loading, setLoading] = useState(true)
+  const [userCompanyId, setUserCompanyId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState("products")
-  const [products, setProducts] = useState<Product[]>(demoProducts)
-  const [offers, setOffers] = useState<Offer[]>(demoOffers)
   const [searchTerm, setSearchTerm] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
   const [isAddProductDialogOpen, setIsAddProductDialogOpen] = useState(false)
   const [isEditProductDialogOpen, setIsEditProductDialogOpen] = useState(false)
   const [isDeleteProductDialogOpen, setIsDeleteProductDialogOpen] = useState(false)
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
+  const [newProduct, setNewProduct] =
+    useState<Omit<Product, "id" | "company_id" | "created_at" | "updated_at">>(emptyProduct)
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null)
+  const [isAddCategoryDialogOpen, setIsAddCategoryDialogOpen] = useState(false)
+  const [newCategoryName, setNewCategoryName] = useState("")
+  const [isCreatingCategory, setIsCreatingCategory] = useState(false)
+  const [offers, setOffers] = useState<Offer[]>([])
+  const [searchTermOffers, setSearchTermOffers] = useState("")
   const [isAddOfferDialogOpen, setIsAddOfferDialogOpen] = useState(false)
   const [isEditOfferDialogOpen, setIsEditOfferDialogOpen] = useState(false)
   const [isDeleteOfferDialogOpen, setIsDeleteOfferDialogOpen] = useState(false)
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [selectedOffer, setSelectedOffer] = useState<Offer | null>(null)
-  const [newProduct, setNewProduct] =
-    useState<
-      Omit<
-        Product,
-        | "id"
-        | "company_id"
-        | "category_id"
-        | "total_orders"
-        | "total_revenue"
-        | "sort_order"
-        | "ai_upsell_items"
-        | "ai_recommendation_score"
-      >
-    >(emptyProduct)
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null)
-  const [newOffer, setNewOffer] = useState<Omit<Offer, "id">>(emptyOffer)
+  const [newOffer, setNewOffer] = useState<Omit<Offer, "id" | "company_id" | "created_at" | "updated_at">>(emptyOffer)
   const [editingOffer, setEditingOffer] = useState<Offer | null>(null)
-  const [subscriptions, setSubscriptions] = useState<ProductSubscription[]>(demoProductSubscriptions)
-  const [selectedSubscription, setSelectedSubscription] = useState<ProductSubscription | null>(null)
-  const [newSubscription, setNewSubscription] = useState<Omit<ProductSubscription, "id">>(emptySubscription)
-  const [editingSubscription, setEditingSubscription] = useState<ProductSubscription | null>(null)
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([])
+  const [selectedSubscription, setSelectedSubscription] = useState<Subscription | null>(null)
+  const [newSubscription, setNewSubscription] =
+    useState<Omit<Subscription, "id" | "company_id" | "created_at" | "updated_at">>(emptySubscription)
+  const [editingSubscription, setEditingSubscription] = useState<Subscription | null>(null)
   const [isAddSubscriptionDialogOpen, setIsAddSubscriptionDialogOpen] = useState(false)
   const [isEditSubscriptionDialogOpen, setIsEditSubscriptionDialogOpen] = useState(false)
   const [isDeleteSubscriptionDialogOpen, setIsDeleteSubscriptionDialogOpen] = useState(false)
@@ -1030,32 +1074,361 @@ export default function ProductsPage() {
   const [importedItems, setImportedItems] = useState<ImportedItem[]>([])
   const [isProcessingImport, setIsProcessingImport] = useState(false)
 
-  const categoryMap = React.useMemo(() => {
-    return demoProductCategories.reduce(
-      (map, category) => {
-        map[category.id] = category.name
-        return map
-      },
-      {} as Record<string, string>,
-    )
+  const supabase = createClient()
+
+  const fetchSubscriptions = async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data: profile } = await supabase.from("user_profiles").select("company_id").eq("id", user.id).single()
+
+      if (!profile?.company_id) return
+
+      const { data, error } = await supabase
+        .from("subscriptions")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .order("created_at", { ascending: false })
+
+      if (error) {
+        console.error("Error fetching subscriptions:", error)
+        toast({
+          title: "Error",
+          description: "Failed to load subscriptions",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setSubscriptions(data || [])
+    } catch (error) {
+      console.error("Error fetching subscriptions:", error)
+    }
+  }
+
+  const fetchOffers = async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data: profile } = await supabase.from("user_profiles").select("company_id").eq("id", user.id).single()
+
+      if (!profile?.company_id) return
+
+      const { data, error } = await supabase
+        .from("offers")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .order("created_at", { ascending: false })
+
+      if (error) {
+        console.error("Error fetching offers:", error)
+        toast({
+          title: "Error",
+          description: "Failed to load offers",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setOffers(data || [])
+    } catch (error) {
+      console.error("Error fetching offers:", error)
+    }
+  }
+
+  useEffect(() => {
+    fetchProducts()
+    fetchCategories()
+    fetchSubscriptions()
+    fetchOffers()
   }, [])
 
-  const categories = Array.from(
-    new Set([...products.map((p) => p.category_id), ...subscriptions.map((s) => s.category)]),
-  )
+  const fetchCategories = async () => {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      if (!session?.user) return
+
+      const { data: staffData } = await supabase
+        .from("staff")
+        .select("company_id")
+        .eq("user_id", session.user.id)
+        .eq("status", "active")
+        .single()
+
+      if (!staffData) return
+
+      const { data: categoriesData, error } = await supabase
+        .from("categories")
+        .select("id, name")
+        .eq("company_id", staffData.company_id)
+        .order("name")
+
+      if (error) {
+        console.error("Error fetching categories:", error)
+        return
+      }
+
+      setCategories(categoriesData || [])
+    } catch (error) {
+      console.error("Error fetching categories:", error)
+    }
+  }
+
+  const fetchProducts = async () => {
+    try {
+      setLoading(true)
+
+      // Get current user
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      if (!session?.user) {
+        toast({
+          title: "Authentication required",
+          description: "Please sign in to view products.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Get user's company from staff table
+      const { data: staffData, error: staffError } = await supabase
+        .from("staff")
+        .select("company_id, permissions")
+        .eq("user_id", session.user.id)
+        .eq("status", "active")
+        .single()
+
+      if (staffError || !staffData) {
+        toast({
+          title: "Access denied",
+          description: "You don't have access to products.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setUserCompanyId(staffData.company_id)
+
+      // Fetch products for the company
+      const { data: productsData, error: productsError } = await supabase
+        .from("products")
+        .select("*")
+        .eq("company_id", staffData.company_id)
+        .order("sort_order", { ascending: true })
+
+      if (productsError) {
+        toast({
+          title: "Error fetching products",
+          description: productsError.message,
+          variant: "destructive",
+        })
+        return
+      }
+
+      setProducts(productsData || [])
+
+      // Fetch analytics for the products
+      const { data: analyticsData, error: analyticsError } = await supabase
+        .from("products_daily_analysis")
+        .select("*")
+        .eq("company_id", staffData.company_id)
+        .gte("analysis_date", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]) // Last 30 days
+
+      if (!analyticsError && analyticsData) {
+        setAnalytics(analyticsData)
+      }
+    } catch (error) {
+      console.error("Error fetching data:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load products data.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleAddProduct = async () => {
+    if (!newProduct.name || !newProduct.price) {
+      toast({
+        title: "Missing required fields",
+        description: "Please fill in product name and price",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("products")
+        .insert([
+          {
+            ...newProduct,
+            company_id: userCompanyId,
+          },
+        ])
+        .select()
+        .single()
+
+      if (error) {
+        toast({
+          title: "Error adding product",
+          description: error.message,
+          variant: "destructive",
+        })
+        return
+      }
+
+      setProducts([...products, data])
+      setNewProduct(emptyProduct)
+      setIsAddProductDialogOpen(false)
+
+      toast({
+        title: "Product added",
+        description: "Product has been successfully added.",
+      })
+    } catch (error) {
+      console.error("Error adding product:", error)
+      toast({
+        title: "Error",
+        description: "Failed to add product.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleUpdateProduct = async () => {
+    if (!editingProduct) return
+
+    try {
+      const { data, error } = await supabase
+        .from("products")
+        .update({
+          name: editingProduct.name,
+          description: editingProduct.description,
+          price: editingProduct.price,
+          category: editingProduct.category,
+          category_id: editingProduct.category_id,
+          image_url: editingProduct.image_url,
+          is_available: editingProduct.is_available,
+          is_featured: editingProduct.is_featured,
+          preparation_time: editingProduct.preparation_time,
+          calories: editingProduct.calories,
+          protein: editingProduct.protein,
+          carbs: editingProduct.carbs,
+          fat: editingProduct.fat,
+          tags: editingProduct.tags,
+          ingredients: editingProduct.ingredients,
+          allergens: editingProduct.allergens,
+          dietary_info: editingProduct.dietary_info,
+          variants: editingProduct.variants,
+          sort_order: editingProduct.sort_order,
+        })
+        .eq("id", editingProduct.id)
+        .select()
+        .single()
+
+      if (error) {
+        toast({
+          title: "Error updating product",
+          description: error.message,
+          variant: "destructive",
+        })
+        return
+      }
+
+      setProducts(products.map((p) => (p.id === editingProduct.id ? data : p)))
+      setEditingProduct(null)
+      setIsEditProductDialogOpen(false)
+
+      toast({
+        title: "Product updated",
+        description: "Product has been successfully updated.",
+      })
+    } catch (error) {
+      console.error("Error updating product:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update product.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleDeleteProduct = async () => {
+    if (!selectedProduct) return
+
+    try {
+      const { error } = await supabase.from("products").delete().eq("id", selectedProduct.id)
+
+      if (error) {
+        toast({
+          title: "Error deleting product",
+          description: error.message,
+          variant: "destructive",
+        })
+        return
+      }
+
+      setProducts(products.filter((p) => p.id !== selectedProduct.id))
+      setSelectedProduct(null)
+      setIsDeleteProductDialogOpen(false)
+
+      toast({
+        title: "Product deleted",
+        description: "Product has been successfully deleted.",
+      })
+    } catch (error) {
+      console.error("Error deleting product:", error)
+      toast({
+        title: "Error",
+        description: "Failed to delete product.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const getProductAnalytics = (productId: string) => {
+    return analytics.filter((a) => a.product_id === productId)
+  }
+
+  const getTotalAnalytics = (productId: string) => {
+    const productAnalytics = getProductAnalytics(productId)
+    return productAnalytics.reduce(
+      (total, day) => ({
+        revenue: total.revenue + Number(day.daily_revenue),
+        sales: total.sales + day.daily_sales_count,
+        orders: total.orders + day.daily_orders_containing_product,
+        favorites: total.favorites + day.daily_favorites,
+      }),
+      { revenue: 0, sales: 0, orders: 0, favorites: 0 },
+    )
+  }
+
+  const categoryNames = categories.map((c) => c.name)
 
   const filteredProducts = products.filter((product) => {
     const matchesSearch =
       product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       product.description?.toLowerCase().includes(searchTerm.toLowerCase())
-    const matchesCategory = categoryFilter === "all" || product.category_id === categoryFilter
+    const matchesCategory = categoryFilter === "all" || product.category === categoryFilter
     return matchesSearch && matchesCategory
   })
 
   const filteredOffers = offers.filter(
     (offer) =>
-      offer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      offer.description.toLowerCase().includes(searchTerm.toLowerCase()),
+      offer.name.toLowerCase().includes(searchTermOffers.toLowerCase()) ||
+      offer.description.toLowerCase().includes(searchTermOffers.toLowerCase()),
   )
 
   const filteredSubscriptions = subscriptions.filter(
@@ -1064,252 +1437,471 @@ export default function ProductsPage() {
       subscription.description.toLowerCase().includes(searchTerm.toLowerCase()),
   )
 
-  const handleAddProduct = () => {
-    const product: Product = {
-      ...newProduct,
-      id: `prod_${Date.now()}`,
-      company_id: "comp_1",
-      total_orders: 0,
-      total_revenue: 0,
-      sort_order: 0,
-      monthly_data: { revenue: [], orders: [] },
-      ai_recommendation_score: 0,
-      ai_upsell_items: [],
-      customization_options: {},
-      allergens: [],
-      low_stock_threshold: 0,
-      stock_quantity: 0,
-      track_inventory: false,
-      image_url: "",
-      cost: 0,
-    }
-    setProducts([...products, product])
-    setNewProduct(emptyProduct)
-    setIsAddProductDialogOpen(false)
-  }
+  const handleAddSubscription = async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
 
-  const handleEditProduct = () => {
-    if (editingProduct) {
-      setProducts(products.map((p) => (p.id === editingProduct.id ? editingProduct : p)))
-      setEditingProduct(null)
-      setIsEditProductDialogOpen(false)
-    }
-  }
+      const { data: profile } = await supabase.from("user_profiles").select("company_id").eq("id", user.id).single()
 
-  const handleDeleteProduct = () => {
-    if (selectedProduct) {
-      setProducts(products.filter((p) => p.id !== selectedProduct.id))
-      setSelectedProduct(null)
-      setIsDeleteProductDialogOpen(false)
+      if (!profile?.company_id) return
+
+      const { data, error } = await supabase
+        .from("subscriptions")
+        .insert([{ ...newSubscription, company_id: profile.company_id }])
+        .select()
+        .single()
+
+      if (error) throw error
+
+      setSubscriptions((prev) => [data, ...prev])
+      setNewSubscription(emptySubscription)
+      setIsAddSubscriptionDialogOpen(false)
+      toast({
+        title: "Success",
+        description: "Subscription created successfully",
+      })
+    } catch (error) {
+      console.error("Error creating subscription:", error)
+      toast({
+        title: "Error",
+        description: "Failed to create subscription",
+        variant: "destructive",
+      })
     }
   }
 
-  const handleAddOffer = () => {
-    const id = (Math.max(...offers.map((o) => Number.parseInt(o.id))) + 1).toString()
-    const offer: Offer = { ...newOffer, id }
-    setOffers([...offers, offer])
-    setNewOffer(emptyOffer)
-    setIsAddOfferDialogOpen(false)
-  }
+  const handleEditSubscription = async () => {
+    if (!editingSubscription) return
 
-  const handleEditOffer = () => {
-    if (editingOffer) {
-      setOffers(offers.map((o) => (o.id === editingOffer.id ? editingOffer : o)))
-      setEditingOffer(null)
-      setIsEditOfferDialogOpen(false)
-    }
-  }
+    try {
+      const { data, error } = await supabase
+        .from("subscriptions")
+        .update(editingSubscription)
+        .eq("id", editingSubscription.id)
+        .select()
+        .single()
 
-  const handleDeleteOffer = () => {
-    if (selectedOffer) {
-      setOffers(offers.filter((o) => o.id !== selectedOffer.id))
-      setSelectedOffer(null)
-      setIsDeleteOfferDialogOpen(false)
-    }
-  }
+      if (error) throw error
 
-  const handleAddSubscription = () => {
-    const id = (Math.max(...subscriptions.map((s) => Number.parseInt(s.id))) + 1).toString()
-    const subscription: Subscription = { ...newSubscription, id }
-    setSubscriptions([...subscriptions, subscription])
-    setNewSubscription(emptySubscription)
-    setIsAddSubscriptionDialogOpen(false)
-  }
-
-  const handleEditSubscription = () => {
-    if (editingSubscription) {
-      setSubscriptions(subscriptions.map((s) => (s.id === editingSubscription.id ? editingSubscription : s)))
+      setSubscriptions((prev) => prev.map((sub) => (sub.id === data.id ? data : sub)))
       setEditingSubscription(null)
       setIsEditSubscriptionDialogOpen(false)
+      toast({
+        title: "Success",
+        description: "Subscription updated successfully",
+      })
+    } catch (error) {
+      console.error("Error updating subscription:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update subscription",
+        variant: "destructive",
+      })
     }
   }
 
-  const handleDeleteSubscription = () => {
-    if (selectedSubscription) {
-      setSubscriptions(subscriptions.filter((s) => s.id !== selectedSubscription.id))
+  const handleDeleteSubscription = async () => {
+    if (!selectedSubscription) return
+
+    try {
+      const { error } = await supabase.from("subscriptions").delete().eq("id", selectedSubscription.id)
+
+      if (error) throw error
+
+      setSubscriptions((prev) => prev.filter((sub) => sub.id !== selectedSubscription.id))
       setSelectedSubscription(null)
       setIsDeleteSubscriptionDialogOpen(false)
+      toast({
+        title: "Success",
+        description: "Subscription deleted successfully",
+      })
+    } catch (error) {
+      console.error("Error deleting subscription:", error)
+      toast({
+        title: "Error",
+        description: "Failed to delete subscription",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleAddOffer = async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data: profile } = await supabase.from("user_profiles").select("company_id").eq("id", user.id).single()
+
+      if (!profile?.company_id) return
+
+      const { data, error } = await supabase
+        .from("offers")
+        .insert([{ ...newOffer, company_id: profile.company_id }])
+        .select()
+        .single()
+
+      if (error) throw error
+
+      setOffers((prev) => [data, ...prev])
+      setNewOffer(emptyOffer)
+      setIsAddOfferDialogOpen(false)
+      toast({
+        title: "Success",
+        description: "Offer created successfully",
+      })
+    } catch (error) {
+      console.error("Error creating offer:", error)
+      toast({
+        title: "Error",
+        description: "Failed to create offer",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleEditOffer = async () => {
+    if (!editingOffer) return
+
+    try {
+      const { data, error } = await supabase
+        .from("offers")
+        .update(editingOffer)
+        .eq("id", editingOffer.id)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      setOffers((prev) => prev.map((offer) => (offer.id === data.id ? data : offer)))
+      setEditingOffer(null)
+      setIsEditOfferDialogOpen(false)
+      toast({
+        title: "Success",
+        description: "Offer updated successfully",
+      })
+    } catch (error) {
+      console.error("Error updating offer:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update offer",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleDeleteOffer = async () => {
+    if (!selectedOffer) return
+
+    try {
+      const { error } = await supabase.from("offers").delete().eq("id", selectedOffer.id)
+
+      if (error) throw error
+
+      setOffers((prev) => prev.filter((offer) => offer.id !== selectedOffer.id))
+      setSelectedOffer(null)
+      setIsDeleteOfferDialogOpen(false)
+      toast({
+        title: "Success",
+        description: "Offer deleted successfully",
+      })
+    } catch (error) {
+      console.error("Error deleting offer:", error)
+      toast({
+        title: "Error",
+        description: "Failed to delete offer",
+        variant: "destructive",
+      })
     }
   }
 
   const handleFileUpload = async (files: FileList | null) => {
-    if (!files || files.length === 0) return
+    if (!files) return
 
     setIsProcessingImport(true)
+    setImportedItems([])
 
-    // Simulate processing delay
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+    // Simulate AI processing
+    setTimeout(() => {
+      const newItems: ImportedItem[] = []
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const baseId = Math.random().toString(36).substring(7)
 
-    // Mock intelligent parsing results
-    const mockImportedItems: ImportedItem[] = [
-      {
-        id: "import-1",
-        type: "product",
-        name: "Artisan Sourdough Bread",
-        description: "Handcrafted sourdough bread with organic flour",
-        price: 8.99,
-        category: "Bakery",
-        confidence: 0.95,
-        selected: true,
-        rawData: { source: files[0].name },
-      },
-      {
-        id: "import-2",
-        type: "subscription",
-        name: "Daily Fresh Bread",
-        description: "Fresh bread delivered daily to your door",
-        price: 24.99,
-        category: "Bakery",
-        confidence: 0.88,
-        selected: true,
-        rawData: { source: files[0].name },
-      },
-      {
-        id: "import-3",
-        type: "offer",
-        name: "Buy 2 Get 1 Free Bread",
-        description: "Special offer on all bread items",
-        confidence: 0.92,
-        selected: true,
-        rawData: { source: files[0].name },
-      },
-    ]
+        newItems.push({
+          id: `${baseId}-1`,
+          type: "product",
+          name: `AI Extracted Product ${i + 1}`,
+          description: "This product was automatically extracted from the document.",
+          price: 19.99 + i,
+          category: "Meal",
+          confidence: 0.85,
+          selected: true,
+          rawData: { filename: file.name, size: file.size },
+        })
 
-    setImportedItems(mockImportedItems)
-    setIsProcessingImport(false)
+        newItems.push({
+          id: `${baseId}-2`,
+          type: "subscription",
+          name: `AI Extracted Subscription ${i + 1}`,
+          description: "This subscription was automatically extracted from the document.",
+          price: 49.99 + i,
+          category: "Service",
+          confidence: 0.92,
+          selected: true,
+          rawData: { filename: file.name, size: file.size },
+        })
+
+        newItems.push({
+          id: `${baseId}-3`,
+          type: "offer",
+          name: `AI Extracted Offer ${i + 1}`,
+          description: "This offer was automatically extracted from the document.",
+          confidence: 0.78,
+          selected: false,
+          rawData: { filename: file.name, size: file.size },
+        })
+      }
+
+      setImportedItems(newItems)
+      setIsProcessingImport(false)
+    }, 2000)
   }
 
-  const handleBulkImport = () => {
+  const handleBulkImport = async () => {
     const selectedItems = importedItems.filter((item) => item.selected)
 
-    selectedItems.forEach((item) => {
-      if (item.type === "product") {
-        const newProduct: Product = {
-          id: `prod_${Date.now()}`,
-          company_id: "comp_1",
-          name: item.name,
-          description: item.description || "",
-          price: item.price || 0,
-          category_id: "cat_1", // Default category
-          is_available: true,
-          is_featured: false,
-          tags: ["Imported"],
-          ingredients: [],
-          nutritionalInfo: { calories: 0, protein: 0, carbs: 0, fat: 0 },
-          total_orders: 0,
-          total_revenue: 0,
-          sort_order: 0,
-          monthly_data: { revenue: [], orders: [] },
-        }
-        setProducts((prev) => [...prev, newProduct])
-      } else if (item.type === "subscription") {
-        const newSub: Subscription = {
-          id: (Math.max(...subscriptions.map((s) => Number.parseInt(s.id))) + 1).toString(),
-          name: item.name,
-          description: item.description,
-          price: item.price || 0,
-          billingCycle: "monthly",
-          features: ["Imported feature"],
-          popular: false,
-          active: true,
-          category: item.category || "Imported",
-        }
-        setSubscriptions((prev) => [...prev, newSub])
-      }
-    })
+    for (const item of selectedItems) {
+      try {
+        if (item.type === "product") {
+          const { data, error } = await supabase
+            .from("products")
+            .insert([
+              {
+                company_id: userCompanyId,
+                name: item.name,
+                description: item.description,
+                price: item.price,
+                category: item.category,
+              },
+            ])
+            .select()
+            .single()
 
-    setImportedItems([])
+          if (error) {
+            toast({
+              title: "Error importing product",
+              description: error.message,
+              variant: "destructive",
+            })
+          } else {
+            setProducts((prev) => [...prev, data])
+          }
+        } else if (item.type === "subscription") {
+          const { data, error } = await supabase
+            .from("subscriptions")
+            .insert([
+              {
+                company_id: userCompanyId,
+                name: item.name,
+                description: item.description,
+                price: item.price,
+                category: item.category,
+              },
+            ])
+            .select()
+            .single()
+
+          if (error) {
+            toast({
+              title: "Error importing subscription",
+              description: error.message,
+              variant: "destructive",
+            })
+          } else {
+            setSubscriptions((prev) => [...prev, data])
+          }
+        } else if (item.type === "offer") {
+          // Basic offer import, adjust as needed
+          const { data, error } = await supabase
+            .from("offers")
+            .insert([
+              {
+                company_id: userCompanyId,
+                name: item.name,
+                description: item.description,
+              },
+            ])
+            .select()
+            .single()
+
+          if (error) {
+            toast({
+              title: "Error importing offer",
+              description: error.message,
+              variant: "destructive",
+            })
+          } else {
+            setOffers((prev) => [...prev, data])
+          }
+        }
+      } catch (error) {
+        console.error("Error during bulk import:", error)
+        toast({
+          title: "Error",
+          description: `Failed to import ${item.type}: ${item.name}.`,
+          variant: "destructive",
+        })
+      }
+    }
+
     setIsImportDialogOpen(false)
+    toast({
+      title: "Import complete",
+      description: `Successfully imported ${selectedItems.length} items.`,
+    })
+  }
+
+  const handleCreateCategory = async () => {
+    if (!newCategoryName.trim()) {
+      toast({
+        title: "Error",
+        description: "Category name is required",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (!userCompanyId) {
+      toast({
+        title: "Error",
+        description: "Company information not found",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsCreatingCategory(true)
+    try {
+      const { data, error } = await supabase
+        .from("categories")
+        .insert({
+          name: newCategoryName.trim(),
+          company_id: userCompanyId,
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+
+      // Update categories list
+      setCategories((prev) => [...prev, data])
+
+      // Select the new category in the product form
+      if (isAddProductDialogOpen) {
+        setNewProduct((prev) => ({ ...prev, category_id: data.id }))
+      } else if (isEditProductDialogOpen && editingProduct) {
+        setEditingProduct((prev) => (prev ? { ...prev, category_id: data.id } : null))
+      }
+
+      // Reset form and close modal
+      setNewCategoryName("")
+      setIsAddCategoryDialogOpen(false)
+
+      toast({
+        title: "Success",
+        description: "Category created successfully",
+      })
+    } catch (error) {
+      console.error("Error creating category:", error)
+      toast({
+        title: "Error",
+        description: "Failed to create category",
+        variant: "destructive",
+      })
+    } finally {
+      setIsCreatingCategory(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <FloatingSidebar>
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading products...</p>
+          </div>
+        </div>
+      </FloatingSidebar>
+    )
   }
 
   const ProductCard = ({ product }: { product: Product }) => {
-    const CategoryIcon = categoryIcons[product.category_id] || Utensils
+    const CategoryIcon = categoryIcons[product.category] || Utensils
+
+    const analytics = getTotalAnalytics(product.id)
 
     return (
-      <Card className="bg-upsell-card border-0 shadow-sm hover:shadow-md transition-all duration-200">
-        <CardContent className="p-4">
-          <div className="flex justify-between items-start mb-3">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
-                <CategoryIcon size={20} className="text-gray-600" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-gray-900">{product.name}</h3>
-                <p className="text-sm text-gray-500">{categoryMap[product.category_id] || product.category_id}</p>
-              </div>
+      <Card key={product.id} className="relative">
+        <CardHeader className="pb-2">
+          <div className="flex items-start justify-between">
+            <div className="space-y-1">
+              <CardTitle className="text-lg">{product.name}</CardTitle>
+              <CardDescription className="line-clamp-2">{product.description}</CardDescription>
             </div>
-            <div className="text-right">
-              <p className="font-bold text-lg">${product.price.toFixed(2)}</p>
-              <Badge variant={product.is_available ? "default" : "outline"} className="text-xs">
+            <div className="flex items-center space-x-1">
+              {product.is_featured && (
+                <Badge variant="secondary">
+                  <Star className="mr-1 h-3 w-3" />
+                  Featured
+                </Badge>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSelectedProduct(product)
+                  setIsDeleteProductDialogOpen(true)
+                }}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setEditingProduct(product)
+                  setIsEditProductDialogOpen(true)
+                }}
+              >
+                <Edit className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-2xl font-bold">${product.price}</span>
+              <Badge variant={product.is_available ? "default" : "secondary"}>
                 {product.is_available ? "Available" : "Unavailable"}
               </Badge>
             </div>
-          </div>
-
-          {/* Update the ProductCard component to use the handleNullValue function for description: */}
-          <p className="text-sm text-gray-600 mb-3 line-clamp-2">
-            {handleNullValue(product.description, "No description provided")}
-          </p>
-
-          <div className="flex flex-wrap gap-1 mb-3">
-            {product.dietary_tags?.slice(0, 2).map((tag, index) => (
-              <Badge key={index} variant="outline" className="text-xs">
-                {tag}
-              </Badge>
-            ))}
-            {product.dietary_tags && product.dietary_tags.length > 2 && (
-              <Badge variant="outline" className="text-xs">
-                +{product.dietary_tags.length - 2}
-              </Badge>
-            )}
-          </div>
-
-          {product.is_featured && (
-            <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200 mb-3">Popular</Badge>
-          )}
-
-          <div className="flex justify-end gap-2 mt-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setEditingProduct(product)
-                setIsEditProductDialogOpen(true)
-              }}
-            >
-              <Edit size={16} />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-red-600 hover:text-red-700 hover:bg-red-50 bg-transparent"
-              onClick={() => {
-                setSelectedProduct(product)
-                setIsDeleteProductDialogOpen(true)
-              }}
-            >
-              <Trash2 size={16} />
-            </Button>
+            <div className="grid grid-cols-2 gap-2 text-sm text-muted-foreground">
+              <div className="flex items-center">
+                <DollarSign className="mr-1 h-3 w-3" />${analytics.revenue.toFixed(2)} revenue
+              </div>
+              <div className="flex items-center">
+                <Package className="mr-1 h-3 w-3" />
+                {analytics.sales} sales
+              </div>
+            </div>
+            {product.category && <Badge variant="outline">{product.category}</Badge>}
           </div>
         </CardContent>
       </Card>
@@ -1341,10 +1933,10 @@ export default function ProductsPage() {
 
           <div className="grid grid-cols-2 gap-2 text-xs text-gray-500 mb-3">
             <div>
-              <span className="font-medium">Start:</span> {new Date(offer.startDate).toLocaleDateString()}
+              <span className="font-medium">Start:</span> {new Date(offer.start_date).toLocaleDateString()}
             </div>
             <div>
-              <span className="font-medium">End:</span> {new Date(offer.endDate).toLocaleDateString()}
+              <span className="font-medium">End:</span> {new Date(offer.end_date).toLocaleDateString()}
             </div>
             {offer.code && (
               <div className="col-span-2">
@@ -1405,7 +1997,7 @@ export default function ProductsPage() {
             <div className="text-right">
               <p className="font-bold text-lg">${subscription.price.toFixed(2)}</p>
               <Badge variant="outline" className="text-xs">
-                {billingCycleLabels[subscription.billingCycle]}
+                {billingCycleLabels[subscription.billing_cycle]}
               </Badge>
             </div>
           </div>
@@ -1433,7 +2025,7 @@ export default function ProductsPage() {
               {subscription.popular && (
                 <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">Popular</Badge>
               )}
-              {subscription.trialDays && <span>{subscription.trialDays} day trial</span>}
+              {subscription.trial_days && <span>{subscription.trial_days} day trial</span>}
             </div>
           </div>
 
@@ -1500,7 +2092,7 @@ export default function ProductsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Categories</SelectItem>
-                  {categories.map((category) => (
+                  {categoryNames.map((category) => (
                     <SelectItem key={category} value={category}>
                       {category}
                     </SelectItem>
@@ -1521,7 +2113,12 @@ export default function ProductsPage() {
                   <DialogTitle>Add New Product</DialogTitle>
                   <DialogDescription>Create a new menu item</DialogDescription>
                 </DialogHeader>
-                <ProductForm product={newProduct} setProduct={setNewProduct} categories={categories} />
+                <ProductForm
+                  product={newProduct}
+                  setProduct={setNewProduct}
+                  categories={categories}
+                  setIsAddCategoryDialogOpen={setIsAddCategoryDialogOpen}
+                />
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setIsAddProductDialogOpen(false)}>
                     Cancel
@@ -1541,13 +2138,18 @@ export default function ProductsPage() {
                   <DialogDescription>Update product information</DialogDescription>
                 </DialogHeader>
                 {editingProduct && (
-                  <ProductForm product={editingProduct} setProduct={setEditingProduct} categories={categories} />
+                  <ProductForm
+                    product={editingProduct}
+                    setProduct={setEditingProduct}
+                    categories={categories}
+                    setIsAddCategoryDialogOpen={setIsAddCategoryDialogOpen}
+                  />
                 )}
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setIsEditProductDialogOpen(false)}>
                     Cancel
                   </Button>
-                  <Button onClick={handleEditProduct} className="bg-upsell-blue hover:bg-upsell-blue-hover">
+                  <Button onClick={handleUpdateProduct} className="bg-upsell-blue hover:bg-upsell-blue-hover">
                     <Save size={16} className="mr-2" />
                     Save Changes
                   </Button>
@@ -1569,6 +2171,50 @@ export default function ProductsPage() {
                   </Button>
                   <Button onClick={handleDeleteProduct} className="bg-red-600 hover:bg-red-700 text-white">
                     Delete
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={isAddCategoryDialogOpen} onOpenChange={setIsAddCategoryDialogOpen}>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Add New Category</DialogTitle>
+                  <DialogDescription>Create a new category for your products</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="categoryName">Category Name</Label>
+                    <Input
+                      id="categoryName"
+                      placeholder="Enter category name"
+                      value={newCategoryName}
+                      onChange={(e) => setNewCategoryName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !isCreatingCategory) {
+                          handleCreateCategory()
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setIsAddCategoryDialogOpen(false)
+                      setNewCategoryName("")
+                    }}
+                    disabled={isCreatingCategory}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleCreateCategory}
+                    className="bg-upsell-blue hover:bg-upsell-blue-hover"
+                    disabled={isCreatingCategory || !newCategoryName.trim()}
+                  >
+                    {isCreatingCategory ? "Creating..." : "Save Category"}
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -1668,8 +2314,8 @@ export default function ProductsPage() {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
                 <Input
                   placeholder="Search offers..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  value={searchTermOffers}
+                  onChange={(e) => setSearchTermOffers(e.target.value)}
                   className="pl-10"
                 />
               </div>
@@ -1773,7 +2419,7 @@ export default function ProductsPage() {
             </DialogHeader>
 
             <div className="space-y-6">
-              {importedItems.length === 0 && !isProcessingImport && (
+              {filteredProducts.length === 0 && !isProcessingImport && (
                 <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
                   <div className="space-y-4">
                     <div className="mx-auto w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center">

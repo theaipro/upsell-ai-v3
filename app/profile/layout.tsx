@@ -9,14 +9,34 @@ import { ArrowLeft, User, Shield, Bell, CreditCard } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { useAuth } from "@/lib/auth-context"
+import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 
 export default function ProfileLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { user } = useAuth()
+  const [user, setUser] = useState<any>(null)
   const [lastRoute, setLastRoute] = useState("/dashboard")
+  const supabase = createClient()
+
+  useEffect(() => {
+    const getUser = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (user) {
+        const { data: profile } = await supabase.from("user_profiles").select("name, email").eq("id", user.id).single()
+
+        setUser({
+          name: profile?.name || user.user_metadata?.name || user.email,
+          email: user.email,
+        })
+      } else {
+        router.push("/auth/login")
+      }
+    }
+    getUser()
+  }, [supabase, router])
 
   useEffect(() => {
     // Get the last main route from localStorage
@@ -56,6 +76,15 @@ export default function ProfileLayout({ children }: { children: React.ReactNode 
       description: "Subscription and payment methods",
     },
   ]
+
+  // Show loading state while fetching user data
+  if (!user) {
+    return (
+      <div className="flex h-screen bg-upsell-bg items-center justify-center">
+        <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin"></div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen bg-upsell-bg">

@@ -23,6 +23,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ChatPanel } from "@/components/chat-panel"
 import { CustomerProfilePanel } from "@/components/customer-profile-panel"
+import { useToast } from "@/hooks/use-toast"
+import { createClient } from "@/lib/supabase/client"
 import {
   Plus,
   Search,
@@ -41,14 +43,63 @@ import {
   Users,
   Crown,
   MoreHorizontal,
+  Heart,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-// Import centralized demo data
-import { demoCustomers, type Customer } from "@/lib/demo-data"
+interface Customer {
+  id: string
+  company_id: string
+  name: string
+  email: string
+  phone: string
+  address: string
+  city?: string
+  state?: string
+  zip_code?: string
+  status: "active" | "inactive" | "vip"
+  join_date: string
+  birthday?: string
+  referral_source?: string
+  marketing_consent?: boolean
+  sms_consent?: boolean
+  notes?: string
+  tags: string[]
+  total_orders_lifetime: number
+  total_spent_lifetime: number
+  total_orders_month: number
+  total_spent_month: number
+  loyalty_points: number
+  loyalty_tier?: string
+  last_order_date?: string
+  last_chat_summary?: string
+  avg_days_between_orders: number
+  preferences: {
+    dietary_restrictions?: string[]
+    preferred_contact_method?: string
+    delivery_instructions?: string
+    favorite_product_id?: string
+  }
+  analysis_data: {
+    ltv?: number
+    predicted_clv?: number
+    churn_risk?: number
+    favorite_items?: string[]
+    favorite_categories?: string[]
+    most_active_day?: string
+    most_active_time?: string
+  }
+  recent_orders_history: any[]
+  avatar_url?: string
+  created_at?: string
+  updated_at?: string
+}
 
-// Add the import statement for the new utility function
-import { handleNullValue } from "@/lib/null-value-handler"
+interface Product {
+  id: string
+  name: string
+  category_id: string
+}
 
 const statusConfig = {
   active: { label: "Active", color: "bg-green-100 text-green-800 border-green-200", icon: User },
@@ -58,15 +109,15 @@ const statusConfig = {
 
 const sortOptions = [
   { value: "name", label: "Name" },
-  { value: "lastOrder", label: "Last Order" },
-  { value: "joinDate", label: "Join Date" },
-  { value: "totalOrders", label: "Total Orders" },
-  { value: "totalSpent", label: "Total Spent" },
+  { value: "last_order_date", label: "Last Order" },
+  { value: "join_date", label: "Join Date" },
+  { value: "total_orders_lifetime", label: "Total Orders" },
+  { value: "total_spent_lifetime", label: "Total Spent" },
   { value: "status", label: "Status" },
 ]
 
 const emptyCustomer: Omit<Customer, "id"> = {
-  company_id: "comp_1",
+  company_id: "",
   name: "",
   email: "",
   phone: "",
@@ -75,35 +126,48 @@ const emptyCustomer: Omit<Customer, "id"> = {
   state: "",
   zip_code: "",
   status: "active",
-  join_date: new Date(),
-  total_orders: 0,
-  total_spent: 0,
-  average_order_value: 0,
+  join_date: new Date().toISOString(),
+  total_orders_lifetime: 0,
+  total_spent_lifetime: 0,
+  total_orders_month: 0,
+  total_spent_month: 0,
+  loyalty_points: 0,
+  avg_days_between_orders: 0,
   notes: "",
   tags: [],
-  loyalty_points: 0,
   preferences: {
     dietary_restrictions: [],
     preferred_contact_method: "email",
     delivery_instructions: "",
+    favorite_product_id: "",
   },
-  analysis: {
+  analysis_data: {
     ltv: 0,
     predicted_clv: 0,
     churn_risk: 0,
-    avg_days_between_orders: 0,
     favorite_items: [],
     favorite_categories: [],
     most_active_day: "",
     most_active_time: "",
   },
+  recent_orders_history: [],
 }
 
 const CustomerForm = React.memo(
-  ({ customer, setCustomer }: { customer: Customer | Omit<Customer, "id">; setCustomer: (c: any) => void }) => {
+  ({
+    customer,
+    setCustomer,
+    products,
+  }: { customer: Customer | Omit<Customer, "id">; setCustomer: (c: any) => void; products: any[] }) => {
     const [tagInput, setTagInput] = useState("")
     const [dietaryRestrictionInput, setDietaryRestrictionInput] = useState("")
     const [showAdvanced, setShowAdvanced] = useState(false)
+    const [favoriteProductSearch, setFavoriteProductSearch] = useState("")
+    const [showProductDropdown, setShowProductDropdown] = useState(false)
+
+    const filteredProducts = products.filter((product) =>
+      product.name.toLowerCase().includes(favoriteProductSearch.toLowerCase()),
+    )
 
     const addTag = () => {
       if (tagInput.trim()) {
@@ -144,6 +208,32 @@ const CustomerForm = React.memo(
             prev.preferences?.dietary_restrictions?.filter((_: any, i: number) => i !== index) || [],
         },
       }))
+    }
+
+    const selectFavoriteProduct = (product: any) => {
+      const currentFavorites = customer.analysis_data?.favorite_items || []
+      if (!currentFavorites.includes(product.name)) {
+        setCustomer({
+          ...customer,
+          analysis_data: {
+            ...customer.analysis_data,
+            favorite_items: [...currentFavorites, product.name],
+          },
+        })
+      }
+      setFavoriteProductSearch("")
+      setShowProductDropdown(false)
+    }
+
+    const removeFavoriteProduct = (productName: string) => {
+      const currentFavorites = customer.analysis_data?.favorite_items || []
+      setCustomer({
+        ...customer,
+        analysis_data: {
+          ...customer.analysis_data,
+          favorite_items: currentFavorites.filter((item) => item !== productName),
+        },
+      })
     }
 
     return (
@@ -369,6 +459,53 @@ const CustomerForm = React.memo(
                   ))}
                 </div>
               </div>
+
+              {/* Favorite Products section */}
+              <div className="space-y-2">
+                <Label>Favorite Products</Label>
+                <div className="relative">
+                  <Input
+                    value={favoriteProductSearch}
+                    onChange={(e) => {
+                      setFavoriteProductSearch(e.target.value)
+                      setShowProductDropdown(true)
+                    }}
+                    onFocus={() => setShowProductDropdown(true)}
+                    placeholder="Search and select favorite products..."
+                  />
+                  {showProductDropdown && favoriteProductSearch && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                      {filteredProducts.length > 0 ? (
+                        filteredProducts.map((product) => (
+                          <button
+                            key={product.id}
+                            type="button"
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 focus:bg-gray-100"
+                            onClick={() => selectFavoriteProduct(product)}
+                          >
+                            {product.name}
+                          </button>
+                        ))
+                      ) : (
+                        <div className="p-3 text-sm text-gray-500">No products found</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {(customer.analysis_data?.favorite_items || []).map((productName, index) => (
+                    <Badge key={index} variant="outline" className="flex items-center gap-1">
+                      <Heart size={10} className="text-red-500" />
+                      {productName}
+                      <X
+                        size={12}
+                        className="cursor-pointer hover:text-red-500"
+                        onClick={() => removeFavoriteProduct(productName)}
+                      />
+                    </Badge>
+                  ))}
+                </div>
+              </div>
             </div>
           </CollapsibleContent>
         </Collapsible>
@@ -379,8 +516,13 @@ const CustomerForm = React.memo(
 
 CustomerForm.displayName = "CustomerForm"
 
+const handleNullValue = (value: any, defaultValue: string) => {
+  return value ? value : defaultValue
+}
+
 export default function CustomersPage() {
-  const [customers, setCustomers] = useState<Customer[]>(demoCustomers)
+  const [customers, setCustomers] = useState<Customer[]>([])
+  const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
   const [sortBy, setSortBy] = useState<string>("name")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc")
@@ -395,11 +537,105 @@ export default function CustomersPage() {
   const [chatCustomer, setChatCustomer] = useState<Customer | null>(null)
   const [profileCustomer, setProfileCustomer] = useState<Customer | null>(null)
   const [containerWidth, setContainerWidth] = useState(0)
+  const [products, setProducts] = useState<any[]>([])
+  const [loadingProducts, setLoadingProducts] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const searchParams = useSearchParams()
 
-  // Handle URL parameters for opening customer profiles
+  const supabase = createClient()
+  const { toast } = useToast()
+
+  const fetchCustomers = async () => {
+    try {
+      setLoading(true)
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) {
+        toast({
+          title: "Authentication Error",
+          description: "Please log in to view customers.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      const { data } = await supabase.from("user_profiles").select("company_id").eq("id", user.id).single()
+
+      if (!data?.company_id) {
+        toast({
+          title: "Setup Required",
+          description: "Please complete your company setup first.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      const { data: customerData, error } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("company_id", data.company_id)
+        .order("created_at", { ascending: false })
+
+      if (error) {
+        console.error("Error fetching customers:", error)
+        toast({
+          title: "Error",
+          description: "Failed to load customers. Please try again.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setCustomers(customerData || [])
+    } catch (error) {
+      console.error("Error fetching customers:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load customers. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const fetchProducts = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user?.user_metadata?.company_id) return
+
+    setLoadingProducts(true)
+    try {
+      const { data, error } = await supabase
+        .from("products")
+        .select("id, name, category_id")
+        .eq("company_id", user.user_metadata.company_id)
+        .eq("is_available", true)
+        .order("name")
+
+      if (error) throw error
+      setProducts(data || [])
+    } catch (error) {
+      console.error("Error fetching products:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load products",
+        variant: "destructive",
+      })
+    } finally {
+      setLoadingProducts(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchCustomers()
+    fetchProducts()
+  }, [])
+
   useEffect(() => {
     const customerId = searchParams.get("customer")
     if (customerId) {
@@ -411,7 +647,6 @@ export default function CustomersPage() {
     }
   }, [searchParams, customers])
 
-  // Monitor container width for dynamic layout
   useEffect(() => {
     const updateWidth = () => {
       if (containerRef.current) {
@@ -424,10 +659,8 @@ export default function CustomersPage() {
     return () => window.removeEventListener("resize", updateWidth)
   }, [])
 
-  // Auto-focus search and handle global typing
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't interfere with typing in input fields, textareas, or when modals are open
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement ||
@@ -444,7 +677,6 @@ export default function CustomersPage() {
         return
       }
 
-      // Handle alphanumeric keys, space, and backspace
       if ((e.key.length === 1 && /[a-zA-Z0-9\s@.-]/.test(e.key)) || e.key === "Backspace") {
         e.preventDefault()
 
@@ -470,15 +702,13 @@ export default function CustomersPage() {
     isProfilePanelOpen,
   ])
 
-  // Dynamic grid columns based on container width and content requirements
   const getGridColumns = () => {
-    if (containerWidth < 640) return "grid-cols-1" // Mobile: always 1 column
-    if (containerWidth < 1024) return "grid-cols-2" // Small-medium screens: 2 columns
-    if (containerWidth < 1400) return "grid-cols-3" // Large screens: 3 columns
-    return "grid-cols-3" // Extra large screens: 3 columns
+    if (containerWidth < 640) return "grid-cols-1"
+    if (containerWidth < 1024) return "grid-cols-2"
+    if (containerWidth < 1400) return "grid-cols-3"
+    return "grid-cols-3"
   }
 
-  // Sort customers
   const sortCustomers = (customers: Customer[]) => {
     return [...customers].sort((a, b) => {
       let aValue: any
@@ -489,21 +719,21 @@ export default function CustomersPage() {
           aValue = a.name.toLowerCase()
           bValue = b.name.toLowerCase()
           break
-        case "lastOrder":
+        case "last_order_date":
           aValue = a.last_order_date ? new Date(a.last_order_date).getTime() : 0
           bValue = b.last_order_date ? new Date(b.last_order_date).getTime() : 0
           break
-        case "joinDate":
+        case "join_date":
           aValue = new Date(a.join_date).getTime()
           bValue = new Date(b.join_date).getTime()
           break
-        case "totalOrders":
-          aValue = a.total_orders
-          bValue = b.total_orders
+        case "total_orders_lifetime":
+          aValue = a.total_orders_lifetime
+          bValue = b.total_orders_lifetime
           break
-        case "totalSpent":
-          aValue = a.total_spent
-          bValue = b.total_spent
+        case "total_spent_lifetime":
+          aValue = a.total_spent_lifetime
+          bValue = b.total_spent_lifetime
           break
         case "status":
           const statusOrder = { vip: 3, active: 2, inactive: 1 }
@@ -532,26 +762,136 @@ export default function CustomersPage() {
     }),
   )
 
-  const handleAddCustomer = () => {
-    const customer: Customer = { ...newCustomer, id: `cust_${Date.now()}` }
-    setCustomers([...customers, customer])
-    setNewCustomer(emptyCustomer)
-    setIsAddCustomerDialogOpen(false)
-  }
+  const handleAddCustomer = async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) {
+        toast({
+          title: "Authentication Error",
+          description: "Please log in to add customers.",
+          variant: "destructive",
+        })
+        return
+      }
 
-  const handleEditCustomer = () => {
-    if (editingCustomer) {
-      setCustomers(customers.map((c) => (c.id === editingCustomer.id ? editingCustomer : c)))
-      setEditingCustomer(null)
-      setIsEditCustomerDialogOpen(false)
+      const { data } = await supabase.from("user_profiles").select("company_id").eq("id", user.id).single()
+
+      if (!data?.company_id) {
+        toast({
+          title: "Setup Required",
+          description: "Please complete your company setup first.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      const customerData = {
+        ...newCustomer,
+        company_id: data.company_id,
+        join_date: new Date().toISOString(),
+      }
+
+      const { data: insertedCustomer, error } = await supabase
+        .from("customers")
+        .insert([customerData])
+        .select()
+        .single()
+
+      if (error) {
+        console.error("Error adding customer:", error)
+        toast({
+          title: "Error",
+          description: "Failed to add customer. Please try again.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setCustomers([insertedCustomer, ...customers])
+      setNewCustomer(emptyCustomer)
+      setIsAddCustomerDialogOpen(false)
+
+      toast({
+        title: "Success",
+        description: "Customer added successfully.",
+      })
+    } catch (error) {
+      console.error("Error adding customer:", error)
+      toast({
+        title: "Error",
+        description: "Failed to add customer. Please try again.",
+        variant: "destructive",
+      })
     }
   }
 
-  const handleDeleteCustomer = () => {
-    if (selectedCustomer) {
+  const handleEditCustomer = async () => {
+    if (!editingCustomer) return
+
+    try {
+      const { error } = await supabase.from("customers").update(editingCustomer).eq("id", editingCustomer.id)
+
+      if (error) {
+        console.error("Error updating customer:", error)
+        toast({
+          title: "Error",
+          description: "Failed to update customer. Please try again.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setCustomers(customers.map((c) => (c.id === editingCustomer.id ? editingCustomer : c)))
+      setEditingCustomer(null)
+      setIsEditCustomerDialogOpen(false)
+
+      toast({
+        title: "Success",
+        description: "Customer updated successfully.",
+      })
+    } catch (error) {
+      console.error("Error updating customer:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update customer. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleDeleteCustomer = async () => {
+    if (!selectedCustomer) return
+
+    try {
+      const { error } = await supabase.from("customers").delete().eq("id", selectedCustomer.id)
+
+      if (error) {
+        console.error("Error deleting customer:", error)
+        toast({
+          title: "Error",
+          description: "Failed to delete customer. Please try again.",
+          variant: "destructive",
+        })
+        return
+      }
+
       setCustomers(customers.filter((c) => c.id !== selectedCustomer.id))
       setSelectedCustomer(null)
       setIsDeleteCustomerDialogOpen(false)
+
+      toast({
+        title: "Success",
+        description: "Customer deleted successfully.",
+      })
+    } catch (error) {
+      console.error("Error deleting customer:", error)
+      toast({
+        title: "Error",
+        description: "Failed to delete customer. Please try again.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -563,7 +903,6 @@ export default function CustomersPage() {
   const openProfile = (customer: Customer) => {
     setProfileCustomer(customer)
     setIsProfilePanelOpen(true)
-    // Optionally update URL without navigation
     const url = new URL(window.location.href)
     url.searchParams.set("customer", customer.id)
     window.history.replaceState({}, "", url.toString())
@@ -586,7 +925,7 @@ export default function CustomersPage() {
           <div className="flex items-start justify-between mb-4">
             <div className="flex items-center gap-3 min-w-0 flex-1">
               <Avatar className="h-12 w-12 flex-shrink-0">
-                <AvatarImage src={customer.avatar || "/placeholder.svg"} />
+                <AvatarImage src={customer.avatar_url || "/placeholder.svg"} />
                 <AvatarFallback className="bg-upsell-blue text-white">
                   {customer.name
                     .split(" ")
@@ -622,7 +961,6 @@ export default function CustomersPage() {
           </div>
 
           <div className="space-y-3 mb-4">
-            {/* Show real-time order stats */}
             <div className="flex items-center gap-2 text-sm text-gray-600">
               <Calendar size={14} className="flex-shrink-0" />
               <span>Joined {handleNullValue(new Date(customer.join_date).toLocaleDateString(), "N/A")}</span>
@@ -636,11 +974,11 @@ export default function CustomersPage() {
 
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="bg-gray-50 rounded p-2">
-                <div className="font-medium text-gray-900">{customer.total_orders}</div>
+                <div className="font-medium text-gray-900">{customer.total_orders_lifetime}</div>
                 <div className="text-gray-500">Orders</div>
               </div>
               <div className="bg-gray-50 rounded p-2">
-                <div className="font-medium text-gray-900">${customer.total_spent.toFixed(0)}</div>
+                <div className="font-medium text-gray-900">${customer.total_spent_lifetime.toFixed(0)}</div>
                 <div className="text-gray-500">Spent</div>
               </div>
             </div>
@@ -705,10 +1043,22 @@ export default function CustomersPage() {
     )
   }
 
+  if (loading) {
+    return (
+      <FloatingSidebar>
+        <div className="flex items-center justify-center h-screen">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-upsell-blue mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading customers...</p>
+          </div>
+        </div>
+      </FloatingSidebar>
+    )
+  }
+
   return (
     <FloatingSidebar>
       <div className="flex flex-col h-screen">
-        {/* Fixed Header */}
         <div className="flex-shrink-0 mt-4 ml-4 mb-6 relative z-10">
           <div className="bg-upsell-sidebar text-white p-8 rounded-l-2xl shadow-lg">
             <div className="flex justify-between items-center mb-6">
@@ -718,7 +1068,6 @@ export default function CustomersPage() {
               </div>
             </div>
 
-            {/* Controls */}
             <div className="flex flex-col gap-4">
               <div className="flex flex-col sm:flex-row gap-4">
                 <div className="relative flex-1">
@@ -759,7 +1108,6 @@ export default function CustomersPage() {
           </div>
         </div>
 
-        {/* Scrollable Customer Grid */}
         <div className="flex-1 overflow-y-auto p-8 relative z-0" ref={containerRef}>
           <div className={cn("grid gap-6", getGridColumns())}>
             {filteredAndSortedCustomers.map((customer) => (
@@ -776,7 +1124,6 @@ export default function CustomersPage() {
           )}
         </div>
 
-        {/* Floating Add Button */}
         <div className="fixed bottom-6 right-6 z-30">
           <Button
             onClick={() => setIsAddCustomerDialogOpen(true)}
@@ -787,14 +1134,13 @@ export default function CustomersPage() {
           </Button>
         </div>
 
-        {/* Add Customer Dialog */}
         <Dialog open={isAddCustomerDialogOpen} onOpenChange={setIsAddCustomerDialogOpen}>
           <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Add New Customer</DialogTitle>
               <DialogDescription>Create a new customer profile</DialogDescription>
             </DialogHeader>
-            <CustomerForm customer={newCustomer} setCustomer={setNewCustomer} />
+            <CustomerForm customer={newCustomer} setCustomer={setNewCustomer} products={products} />
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsAddCustomerDialogOpen(false)}>
                 Cancel
@@ -807,14 +1153,15 @@ export default function CustomersPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Edit Customer Dialog */}
         <Dialog open={isEditCustomerDialogOpen} onOpenChange={setIsEditCustomerDialogOpen}>
           <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Edit Customer</DialogTitle>
               <DialogDescription>Update customer information</DialogDescription>
             </DialogHeader>
-            {editingCustomer && <CustomerForm customer={editingCustomer} setCustomer={setEditingCustomer} />}
+            {editingCustomer && (
+              <CustomerForm customer={editingCustomer} setCustomer={setEditingCustomer} products={products} />
+            )}
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsEditCustomerDialogOpen(false)}>
                 Cancel
@@ -827,7 +1174,6 @@ export default function CustomersPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Delete Customer Dialog */}
         <Dialog open={isDeleteCustomerDialogOpen} onOpenChange={setIsDeleteCustomerDialogOpen}>
           <DialogContent>
             <DialogHeader>
@@ -848,7 +1194,6 @@ export default function CustomersPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Chat Panel */}
         <ChatPanel
           customer={chatCustomer}
           isOpen={isChatPanelOpen}
@@ -856,13 +1201,11 @@ export default function CustomersPage() {
           onOpenProfile={openProfile}
         />
 
-        {/* Customer Profile Panel */}
         <CustomerProfilePanel
           customer={profileCustomer}
           isOpen={isProfilePanelOpen}
           onClose={() => {
             setIsProfilePanelOpen(false)
-            // Remove customer parameter from URL
             const url = new URL(window.location.href)
             url.searchParams.delete("customer")
             window.history.replaceState({}, "", url.toString())

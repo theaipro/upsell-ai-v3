@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Separator } from "@/components/ui/separator"
 import { User, Key, Shield, Palette, HelpCircle, LogOut, Bell } from "lucide-react"
-import { useAuth } from "@/lib/auth-context"
+import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 
 interface ProfilePanelProps {
@@ -16,11 +16,29 @@ interface ProfilePanelProps {
 export function ProfilePanel({ isMinimized }: ProfilePanelProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [panelPosition, setPanelPosition] = useState({ top: 0, left: 0 })
-  const { user, logout } = useAuth()
+  const [user, setUser] = useState<any>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
   const pathname = usePathname()
+  const supabase = createClient()
+
+  useEffect(() => {
+    const getUser = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (user) {
+        const { data: profile } = await supabase.from("user_profiles").select("name, email").eq("id", user.id).single()
+
+        setUser({
+          name: profile?.name || user.user_metadata?.name || user.email,
+          email: user.email,
+        })
+      }
+    }
+    getUser()
+  }, [supabase])
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -73,6 +91,12 @@ export function ProfilePanel({ isMinimized }: ProfilePanelProps) {
       localStorage.setItem("lastMainRoute", pathname)
     }
     router.push(path)
+    setIsOpen(false)
+  }
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    router.push("/auth/login")
     setIsOpen(false)
   }
 
@@ -143,7 +167,7 @@ export function ProfilePanel({ isMinimized }: ProfilePanelProps) {
             </Avatar>
             <div className="ml-3 text-left flex-1">
               <p className="text-sm font-medium truncate">{user?.name || "User"}</p>
-              <p className="text-xs text-gray-400 truncate">{user?.email}</p>
+              <p className="text-xs text-gray-400 truncate font-normal leading-6">{user?.email}</p>
             </div>
           </>
         )}
@@ -202,10 +226,7 @@ export function ProfilePanel({ isMinimized }: ProfilePanelProps) {
           <div className="p-2">
             <Button
               variant="ghost"
-              onClick={() => {
-                logout()
-                setIsOpen(false)
-              }}
+              onClick={handleLogout}
               className="w-full justify-start px-4 py-3 text-red-600 hover:bg-red-50 hover:text-red-700"
             >
               <LogOut className="mr-3 h-4 w-4" />
